@@ -126,3 +126,25 @@
 2025-04-20 04:01:40,591 - INFO - Processing request of type ListToolsRequest
 2025-04-20 04:01:40,591 - DEBUG - Dispatching request of type ListToolsRequest
 2025-04-20 04:01:40,591 - DEBUG - Response sent
+2025-04-20 04:03:52,043 - DEBUG - Received message: <mcp.shared.session.RequestResponder object at 0x00000145920DBA40>
+2025-04-20 04:03:52,043 - INFO - Processing request of type CallToolRequest
+2025-04-20 04:03:52,043 - DEBUG - Dispatching request of type CallToolRequest
+2025-04-20 04:03:52,043 - INFO - Attempting to send email
+2025-04-20 04:03:52,043 - INFO - To: ['yatharthkapadia2@gmail.com']
+2025-04-20 04:03:52,043 - INFO - Subject: this is test
+2025-04-20 04:03:52,043 - INFO - CC: []
+2025-04-20 04:03:52,200 - DEBUG - Connecting to smtp.gmail.com:587
+2025-04-20 04:03:52,200 - DEBUG - Starting TLS
+2025-04-20 04:03:52,368 - DEBUG - Logging in as yatharth.casual@gmail.com
+2025-04-20 04:03:52,602 - DEBUG - Sending email to: ['yatharthkapadia2@gmail.com']
+2025-04-20 04:03:53,219 - DEBUG - Email sent successfully
+2025-04-20 04:03:53,267 - DEBUG - Response sent
+2025-04-20 04:06:26,134 - DEBUG - Initializing server 'email'
+2025-04-20 04:06:26,134 - DEBUG - Registering handler for ListToolsRequest
+2025-04-20 04:06:26,134 - DEBUG - Registering handler for CallToolRequest
+2025-04-20 04:06:26,134 - DEBUG - Using proactor: IocpProactor
+2025-04-20 04:06:26,145 - DEBUG - Received message: root=InitializedNotification(method='notifications/initialized', params=None, jsonrpc='2.0')
+2025-04-20 04:06:26,150 - DEBUG - Received message: <mcp.shared.session.RequestResponder object at 0x000001EF3D435940>
+2025-04-20 04:06:26,150 - INFO - Processing request of type ListToolsRequest
+2025-04-20 04:06:26,150 - DEBUG - Dispatching request of type ListToolsRequest
+2025-04-20 04:06:26,150 - DEBUG - Response sent

@@ -13,6 +13,7 @@ from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
+from email.utils import parseaddr # Import parseaddr
 
 # Configure logging
 logging.basicConfig(
@@ -237,15 +238,27 @@ async def reply_to_email_async(
         original_email = email.message_from_bytes(msg_data[0][1])
         
         # Extract needed headers
-        from_address = original_email.get("From", "")
-        # Extract email address from "Name <email>" format if needed
-        to_address = from_address
-        if "<" in from_address and ">" in from_address:
-            to_address = from_address[from_address.find("<")+1:from_address.find(">")]
+        # Prioritize Reply-To header, then From header
+        reply_to_header = original_email.get("Reply-To")
+        from_header = original_email.get("From", "")
+        
+        # Use parseaddr to extract the email address correctly
+        if reply_to_header:
+            _, to_address = parseaddr(reply_to_header)
+        else:
+            _, to_address = parseaddr(from_header)
+
+        if not to_address:
+             # Fallback or raise error if no valid address found
+             _, to_address = parseaddr(from_header) # Try From header again just in case Reply-To was invalid
+             if not to_address:
+                 raise ValueError(f"Could not determine a valid recipient address from Reply-To ('{reply_to_header}') or From ('{from_header}') headers.")
+
+        logging.debug(f"Replying to address: {to_address}") # Log the determined reply address
         
         # Prepare subject with Re: prefix if not already there
         subject = original_email.get("Subject", "")
-        if not subject.startswith("Re:"):
+        if not subject.lower().startswith("re:"): # Make check case-insensitive
             subject = f"Re: {subject}"
             
         # Create reply message
@@ -261,10 +274,12 @@ async def reply_to_email_async(
         
         # Combine original References with the Message-ID of the email being replied to
         references = original_email.get("References", "")
-        if references:
-            msg['References'] = f"{references} {original_email.get('Message-ID', '')}"
-        else:
-            msg['References'] = original_email.get("Message-ID", "")
+        original_message_id = original_email.get("Message-ID", "")
+        if original_message_id: # Only add if Message-ID exists
+            if references:
+                msg['References'] = f"{references} {original_message_id}"
+            else:
+                msg['References'] = original_message_id
             
         # Add body with quoted original message
         quoted_content = format_quoted_reply(original_email)
@@ -286,7 +301,7 @@ async def reply_to_email_async(
                 server.login(EMAIL_CONFIG["email"], EMAIL_CONFIG["password"])
                 
                 # Send email
-                recipients = [to_address] + (cc_addresses or [])
+                recipients = [to_address] + (cc_addresses or []) # Use the parsed to_address
                 logging.debug(f"Sending reply to: {recipients}")
                 result = server.send_message(msg, EMAIL_CONFIG["email"], recipients)
                 
@@ -415,6 +430,43 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                 },
                 "required": ["to", "subject", "content"],
+            },
+        ),
+        types.Tool(
+            name="find-email-threads",
+            description="Find all emails that are part of the same conversation thread as the reference email",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "email_id": {
+                        "type": "string",
+                        "description": "The ID of the reference email to find related thread messages",
+                    },
+                },
+                "required": ["email_id"],
+            },
+        ),
+        types.Tool(
+            name="reply-to-thread",
+            description="CONFIRMATION STEP: Reply to a specific email while maintaining the conversation thread. Before calling this, show the reply details to the user for confirmation.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "email_id": {
+                        "type": "string",
+                        "description": "The ID of the email to reply to",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Confirmed reply content",
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of CC recipient email addresses (optional, confirmed)",
+                    },
+                },
+                "required": ["email_id", "content"],
             },
         ),
     ]
@@ -556,6 +608,25 @@ async def handle_call_tool(
                 )]
             
             try:
+                # Try selecting inbox first
+                logging.debug("Attempting to select inbox mailbox")
+                status, data = mail.select("inbox")
+                
+                # Check if the selection was successful
+                if status != 'OK':
+                    logging.debug(f"Failed to select inbox, trying sent folder: {status} {data}")
+                    # If inbox fails, try sent folder
+                    status, data = mail.select('"[Gmail]/Sent Mail"')  # Adjust if not Gmail
+                    
+                    if status != 'OK':
+                        logging.error(f"Failed to select any mailbox: {status} {data}")
+                        return [types.TextContent(
+                            type="text",
+                            text="Failed to select a mailbox. Cannot fetch email content."
+                        )]
+                
+                logging.debug(f"Successfully selected mailbox: {data}")
+                
                 async with asyncio.timeout(SEARCH_TIMEOUT):
                     email_content = await get_email_content_async(mail, email_id)
                     
@@ -577,6 +648,19 @@ async def handle_call_tool(
                     type="text",
                     text="Operation timed out while fetching email content."
                 )]
+            except Exception as e:
+                logging.error(f"Error in get-email-content: {str(e)}")
+                return [types.TextContent(
+                    type="text",
+                    text=f"Error fetching email: {str(e)}"
+                )]
+            finally:
+                # Ensure proper cleanup
+                try:
+                    mail.close()
+                    mail.logout()
+                except Exception as e:
+                    logging.debug(f"Error during cleanup: {str(e)}")
                 
         elif name == "count-daily-emails":
             start_date = datetime.strptime(arguments["start_date"], "%Y-%m-%d")
@@ -605,20 +689,112 @@ async def handle_call_tool(
                 text=result_text
             )]
                 
+        elif name == "find-email-threads":
+            email_id = arguments.get("email_id")
+            if not email_id:
+                return [types.TextContent(
+                    type="text",
+                    text="Email ID is required."
+                )]
+            
+            # Select inbox to search for threads
+            mail.select("inbox")
+            
+            try:
+                async with asyncio.timeout(SEARCH_TIMEOUT):
+                    thread_emails = await find_thread_emails_async(mail, email_id)
+                    
+                if not thread_emails:
+                    return [types.TextContent(
+                        type="text",
+                        text="No related emails found in this thread."
+                    )]
+                
+                # Format the results as a table
+                result_text = "Thread-related emails:\n\n"
+                result_text += "ID | From | Date | Subject | Relation\n"
+                result_text += "-" * 100 + "\n"
+                
+                for email in thread_emails:
+                    result_text += f"{email['id']} | {email['from']} | {email['date']} | {email['subject']} | {email['thread_relation']}\n"
+                
+                result_text += "\nUse get-email-content with an email ID to view the full content of a specific email."
+                
+                return [types.TextContent(
+                    type="text",
+                    text=result_text
+                )]
+                
+            except asyncio.TimeoutError:
+                return [types.TextContent(
+                    type="text",
+                    text="Operation timed out while searching for thread emails."
+                )]
+                
+        elif name == "reply-to-thread":
+            email_id = arguments.get("email_id")
+            content = arguments.get("content")
+            cc_addresses = arguments.get("cc", [])
+
+            if not email_id:
+                return [types.TextContent(
+                    type="text",
+                    text="Email ID is required."
+                )]
+                
+            if not content:
+                return [types.TextContent(
+                    type="text",
+                    text="Reply content is required."
+                )]
+            
+            # Connect to IMAP server using predefined credentials
+            # Moved connection logic inside the try block for this tool
+            mail = None # Initialize mail to None
+            try:
+                mail = imaplib.IMAP4_SSL(EMAIL_CONFIG["imap_server"])
+                mail.login(EMAIL_CONFIG["email"], EMAIL_CONFIG["password"])
+                # Select inbox to find and reply to the email
+                mail.select("inbox") # Select inbox *after* successful login
+
+                async with asyncio.timeout(SEARCH_TIMEOUT):
+                    await reply_to_email_async(mail, email_id, content, cc_addresses)
+                    return [types.TextContent(
+                        type="text",
+                        text="Reply sent successfully!"
+                    )]
+            except asyncio.TimeoutError:
+                logging.error("Operation timed out while sending reply")
+                return [types.TextContent(
+                    type="text",
+                    text="Operation timed out while sending reply."
+                )]
+            except Exception as e:
+                error_msg = str(e)
+                logging.error(f"Failed to send reply: {error_msg}")
+                return [types.TextContent(
+                    type="text",
+                    text=f"Failed to send reply: {error_msg}"
+                )]
+            finally:
+                # Ensure mail connection is closed even if errors occur
+                if mail:
+                    try:
+                        mail.close()
+                        mail.logout()
+                    except:
+                        pass # Ignore errors during cleanup
         else:
             raise ValueError(f"Unknown tool: {name}")
             
     except Exception as e:
+        # General error handling (e.g., initial connection failure before tool logic)
+        # Note: The mail variable might not be defined here if the initial connection failed
+        logging.error(f"General error in handle_call_tool: {str(e)}")
         return [types.TextContent(
             type="text",
             text=f"Error: {str(e)}"
         )]
-    finally:
-        try:
-            mail.close()
-            mail.logout()
-        except:
-            pass
 
 async def main():
     # Run the server using stdin/stdout streams
