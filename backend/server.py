@@ -283,17 +283,20 @@ async def find_email_threads(email_id: str) -> str:
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def reply_to_thread(email_id: str, content: str, cc: list = None) -> str:
+async def reply_to_thread(email_id: str, content: str, reply_all: bool = False) -> str:
     """Reply to a specific email while maintaining the conversation thread.
     
     Args:
         email_id: The ID of the email to reply to
         content: Reply content
-        cc: Optional list of CC recipient email addresses
+        reply_all: Whether to reply to all participants in the thread (default: False)
     """
     try:
         # Authenticate and get Gmail service
         service = authenticate_gmail()
+        
+        # Get the authenticated user's email
+        my_email = service.users().getProfile(userId='me').execute()['emailAddress']
         
         # Get the original message
         original_message = service.users().messages().get(userId='me', id=email_id).execute()
@@ -306,24 +309,66 @@ async def reply_to_thread(email_id: str, content: str, cc: list = None) -> str:
         if not subject.startswith('Re:'):
             subject = f"Re: {subject}"
         
-        # Find the sender to use as recipient for the reply
-        sender = next((header['value'] for header in headers if header['name'].lower() == 'from'), None)
+        # Function to extract and filter email addresses
+        def extract_emails(header_name):
+            """Extract email addresses from a specific header, excluding the user's email."""
+            email_headers = [header['value'] for header in headers if header['name'].lower() == header_name.lower()]
+            if not email_headers:
+                return []
+            
+            # Split and clean email addresses
+            all_emails = []
+            for header in email_headers:
+                # Handle multiple email formats
+                emails = []
+                if ',' in header:
+                    # Multiple emails in one header
+                    emails = [addr.strip() for addr in header.split(',')]
+                else:
+                    emails = [header.strip()]
+                
+                # Extract email from potential "Name <email>" format
+                emails = [email[email.find('<')+1:email.find('>')] if '<' in email else email for email in emails]
+                
+                # Filter out self and add unique emails
+                emails = [email for email in emails if email and email != my_email]
+                all_emails.extend(emails)
+            
+            return list(dict.fromkeys(all_emails))  # Remove duplicates while preserving order
         
-        if not sender:
-            return "Error: Could not determine recipient for reply."
+        # Extract recipient emails
+        from_emails = extract_emails('From')
+        to_emails = extract_emails('To')
+        cc_emails = extract_emails('Cc')
+        
+        # Determine recipients based on reply_all flag
+        if reply_all:
+            # Combine and deduplicate all non-self emails
+            recipients = list(dict.fromkeys(from_emails + to_emails + cc_emails))
+        else:
+            # Prioritize From, then To
+            recipients = from_emails or to_emails
+        
+        if not recipients:
+            return "Error: Could not determine a recipient for the reply that is not yourself."
         
         # Create reply message
         message = MIMEMultipart()
-        message['to'] = sender
+        
+        # Set recipients
+        if reply_all:
+            # Distribute recipients across To and Cc
+            message['to'] = recipients[0] if recipients else ''
+            if len(recipients) > 1:
+                message['cc'] = ', '.join(recipients[1:])
+        else:
+            message['to'] = recipients[0]
+        
         message['subject'] = subject
         
         # Set thread ID reference headers
         message['References'] = original_message.get('id', '')
         message['In-Reply-To'] = original_message.get('id', '')
-        
-        # Add CC recipients if specified
-        if cc:
-            message['cc'] = ','.join(cc)
         
         # Add content
         msg_txt = MIMEText(content)
@@ -336,7 +381,10 @@ async def reply_to_thread(email_id: str, content: str, cc: list = None) -> str:
         # Send reply
         sent_message = service.users().messages().send(userId='me', body=gmail_message).execute()
         
-        return f"Reply sent successfully! Message ID: {sent_message['id']}"
+        # Prepare recipient information for the response
+        recipient_info = f"to {recipients[0]}" + (f" and {len(recipients)-1} others" if len(recipients) > 1 else "")
+        
+        return f"Reply sent successfully {recipient_info}! Message ID: {sent_message['id']}"
     
     except HttpError as error:
         return f"An error occurred: {error}"
