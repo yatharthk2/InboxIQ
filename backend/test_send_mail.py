@@ -1,5 +1,6 @@
 import base64
 import os.path
+import json  # Add missing import
 from email.mime.text import MIMEText
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -51,7 +52,6 @@ def send_email(service, user_id, message):
         print(f'An error occurred: {error}')
 
 if __name__ == '__main__':
-    import json
     # Authenticate and get Gmail service
     service = authenticate_gmail()
     

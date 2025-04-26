@@ -4,6 +4,11 @@ import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import datetime
+import sys
+from pathlib import Path
+
+# Add the project root to the Python path to enable imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -12,6 +17,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from mcp.server.fastmcp import FastMCP
+from db.database import User, EmailAccount
+from db.database_helper import get_db, init_db
 
 # Define scopes needed for Gmail API - using minimum required permissions
 SCOPES = ['https://www.googleapis.com/auth/gmail.send', 
@@ -21,25 +28,78 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.send',
 # Initialize FastMCP server
 mcp = FastMCP("gmail-tools")
 
-def authenticate_gmail():
-    """Authenticate with Gmail API and return the service object."""
+# Database setup
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'db', 'inboxiq.db')
+
+# Replace the old init_db function
+def initialize_database():
+    """Initialize the database using the SQLAlchemy models"""
+    init_db()
+
+def authenticate_gmail(user_id=None, email_address=None):
+    """Authenticate with Gmail API and return the service object.
+    
+    Args:
+        user_id: The ID of the user in the database
+        email_address: The email address to use for this operation
+    """
     creds = None
-    # The file token.json stores the user's access and refresh tokens
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_info(
-            json.loads(open('token.json').read()), SCOPES)
+    
+    # If user_id and email_address are provided, get credentials from database
+    if user_id and email_address:
+        db = next(get_db())
+        try:
+            email_account = db.query(EmailAccount).filter_by(
+                user_id=user_id, 
+                email_address=email_address
+            ).first()
+            
+            if email_account:
+                creds = Credentials.from_authorized_user_info(
+                    json.loads(email_account.oauth_tokens), SCOPES)
+        finally:
+            db.close()
+    else:
+        # Legacy path for non-user-specific operations (e.g., command-line testing)
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_info(
+                json.loads(open('token.json').read()), SCOPES)
     
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            
+            # Update the refreshed credentials in the database
+            if user_id and email_address:
+                db = next(get_db())
+                try:
+                    email_account = db.query(EmailAccount).filter_by(
+                        user_id=user_id,
+                        email_address=email_address
+                    ).first()
+                    
+                    if email_account:
+                        email_account.oauth_tokens = creds.to_json()
+                        db.commit()
+                finally:
+                    db.close()
+            else:
+                # Legacy path for non-user-specific operations
+                with open('token.json', 'w') as token:
+                    token.write(creds.to_json())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'C:/Users/yatha/Desktop/open-notif/InboxIQ/backend2/credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+            # For new integrations, this should be handled through a separate flow
+            # that redirects users to authenticate with Google
+            if not user_id:
+                # Legacy path for testing without a user account
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+                with open('token.json', 'w') as token:
+                    token.write(creds.to_json())
+            else:
+                raise ValueError("User needs to authenticate with Google. Use the connect_gmail_account function.")
     
     return build('gmail', 'v1', credentials=creds)
 
@@ -66,10 +126,126 @@ def create_message(sender, to, subject, message_text, html=False):
     return {'raw': raw_message}
 
 @mcp.tool()
-async def send_email(to: str, subject: str, body: str, html: bool = False) -> str:
+async def connect_gmail_account(user_id: int, authorization_code: str, redirect_uri: str) -> str:
+    """Connect a user's Gmail account using the authorization code from OAuth flow."""
+    try:
+        # Verify user exists using SQLAlchemy
+        db = next(get_db())
+        try:
+            user = db.query(User).filter_by(id=user_id).first()
+            if not user:
+                return "Error: User not found"
+            
+            # Exchange authorization code for access and refresh tokens
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES, redirect_uri=redirect_uri)
+            flow.fetch_token(code=authorization_code)
+            creds = flow.credentials
+            
+            # Get user's email address from Google profile
+            service = build('gmail', 'v1', credentials=creds)
+            profile = service.users().getProfile(userId='me').execute()
+            email_address = profile['emailAddress']
+            
+            # Check if email account already exists
+            existing_account = db.query(EmailAccount).filter_by(
+                user_id=user_id, 
+                email_address=email_address
+            ).first()
+            
+            if existing_account:
+                # Update existing account
+                existing_account.oauth_tokens = creds.to_json()
+                db.commit()
+            else:
+                # Create a new email account
+                new_account = EmailAccount(
+                    user_id=user_id,
+                    email_address=email_address,
+                    provider_type="gmail",
+                    oauth_tokens=creds.to_json()
+                )
+                db.add(new_account)
+                db.commit()
+            
+            return f"Successfully connected Gmail account: {email_address}"
+        finally:
+            db.close()
+    except Exception as e:
+        return f"Error connecting Gmail account: {str(e)}"
+
+@mcp.tool()
+async def register_user(email: str, password: str) -> str:
+    """Register a new user in the system.
+    
+    Args:
+        email: Email address for the new user
+        password: Password for the new user (will be hashed)
+    """
+    try:
+        # Use SQLAlchemy to create new user
+        db = next(get_db())
+        try:
+            # Check if user already exists
+            existing_user = db.query(User).filter_by(email=email).first()
+            if existing_user:
+                return "Error: User with this email already exists"
+            
+            # Create a simple hash of the password (in production use proper hashing)
+            import hashlib
+            hashed_password = hashlib.sha256(password.encode()).hexdigest()
+            
+            # Create new user with the required fields
+            new_user = User(
+                email=email,
+                hashed_password=hashed_password,
+                preferences={},  # Empty JSON object
+                created_at=datetime.datetime.utcnow()
+            )
+            
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            
+            return f"User registered successfully with ID: {new_user.id}"
+        finally:
+            db.close()
+    except Exception as e:
+        return f"Error registering user: {str(e)}"
+
+@mcp.tool()
+async def list_user_email_accounts(user_id: int) -> str:
+    """List all email accounts connected to a user."""
+    try:
+        db = next(get_db())
+        try:
+            # Get all email accounts for the user using SQLAlchemy
+            accounts = db.query(EmailAccount).filter_by(user_id=user_id).all()
+            
+            if not accounts:
+                return "No email accounts connected for this user."
+            
+            result = "Connected email accounts:\n\n"
+            for account in accounts:
+                result += f"ID: {account.id}\n"
+                result += f"Email: {account.email_address}\n"
+                result += f"Provider: {account.provider_type}\n"
+                result += f"Last sync: {account.last_sync}\n"
+                result += "="*40 + "\n"
+            
+            return result
+        finally:
+            db.close()
+    except Exception as e:
+        return f"Error listing user email accounts: {str(e)}"
+
+@mcp.tool()
+async def send_email(user_id: int, email_address: str, to: str, subject: str, body: str, html: bool = False) -> str:
     """Send an email using Gmail API.
     
     Args:
+        user_id: The user's ID in the database
+        email_address: The email address to use for sending
         to: Recipient email address or addresses (comma separated)
         subject: Email subject line
         body: Content of the email
@@ -77,7 +253,7 @@ async def send_email(to: str, subject: str, body: str, html: bool = False) -> st
     """
     try:
         # Authenticate and get Gmail service
-        service = authenticate_gmail()
+        service = authenticate_gmail(user_id, email_address)
         
         # For gmail, sender is automatically the authenticated user's email
         email_message = create_message(None, to, subject, body, html)
@@ -86,18 +262,22 @@ async def send_email(to: str, subject: str, body: str, html: bool = False) -> st
         return f"Email sent successfully! Message ID: {sent_message['id']}"
     except HttpError as error:
         return f"An error occurred: {error}"
+    except ValueError as error:
+        return f"Authentication error: {error}"
 
 @mcp.tool()
-async def search_emails(query: str, max_results: int = 5) -> str:
+async def search_emails(user_id: int, email_address: str, query: str, max_results: int = 5) -> str:
     """Search for emails using Gmail search syntax.
     
     Args:
+        user_id: The user's ID in the database
+        email_address: The email address to search in
         query: Search query using Gmail search syntax
         max_results: Maximum number of results to return (default: 5)
     """
     try:
         # Authenticate and get Gmail service
-        service = authenticate_gmail()
+        service = authenticate_gmail(user_id, email_address)
         
         # Execute search query
         results = service.users().messages().list(
@@ -135,16 +315,18 @@ async def search_emails(query: str, max_results: int = 5) -> str:
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def count_daily_emails(start_date: str, end_date: str) -> str:
+async def count_daily_emails(user_id: int, email_address: str, start_date: str, end_date: str) -> str:
     """Count emails received for each day in a date range.
     
     Args:
+        user_id: The user's ID in the database
+        email_address: The email address to count emails for
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
     """
     try:
         # Authenticate and get Gmail service
-        service = authenticate_gmail()
+        service = authenticate_gmail(user_id, email_address)
         
         # Convert string dates to datetime objects
         start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
@@ -186,15 +368,17 @@ async def count_daily_emails(start_date: str, end_date: str) -> str:
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def get_email_content(email_id: str) -> str:
+async def get_email_content(user_id: int, email_address: str, email_id: str) -> str:
     """Get the full content of a specific email by its ID.
     
     Args:
+        user_id: The user's ID in the database
+        email_address: The email address to retrieve the email from
         email_id: The ID of the email to retrieve
     """
     try:
         # Authenticate and get Gmail service
-        service = authenticate_gmail()
+        service = authenticate_gmail(user_id, email_address)
         
         # Get the message
         message = service.users().messages().get(userId='me', id=email_id, format='full').execute()
@@ -237,15 +421,17 @@ async def get_email_content(email_id: str) -> str:
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def find_email_threads(email_id: str) -> str:
+async def find_email_threads(user_id: int, email_address: str, email_id: str) -> str:
     """Find all emails that are part of the same conversation thread as the reference email.
     
     Args:
+        user_id: The user's ID in the database
+        email_address: The email address to search in
         email_id: The ID of the reference email to find related thread messages
     """
     try:
         # Authenticate and get Gmail service
-        service = authenticate_gmail()
+        service = authenticate_gmail(user_id, email_address)
         
         # Get the message to find its thread ID
         message = service.users().messages().get(userId='me', id=email_id).execute()
@@ -283,17 +469,19 @@ async def find_email_threads(email_id: str) -> str:
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def reply_to_thread(email_id: str, content: str, reply_all: bool = False) -> str:
+async def reply_to_thread(user_id: int, email_address: str, email_id: str, content: str, reply_all: bool = False) -> str:
     """Reply to a specific email while maintaining the conversation thread.
     
     Args:
+        user_id: The user's ID in the database
+        email_address: The email address to use for sending the reply
         email_id: The ID of the email to reply to
         content: Reply content
         reply_all: Whether to reply to all participants in the thread (default: False)
     """
     try:
         # Authenticate and get Gmail service
-        service = authenticate_gmail()
+        service = authenticate_gmail(user_id, email_address)
         
         # Get the authenticated user's email
         my_email = service.users().getProfile(userId='me').execute()['emailAddress']
@@ -390,5 +578,7 @@ async def reply_to_thread(email_id: str, content: str, reply_all: bool = False) 
         return f"An error occurred: {error}"
 
 if __name__ == "__main__":
+    # Initialize the database
+    initialize_database()
     # Run the server
     mcp.run(transport='stdio')

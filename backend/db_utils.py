@@ -9,21 +9,15 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 # Create engine and session factory
 engine = create_engine(f'sqlite:///{DB_PATH}')
-SessionLocal = sessionmaker(bind=engine)
-Session = scoped_session(SessionLocal)
+SessionFactory = sessionmaker(bind=engine)
+Session = scoped_session(SessionFactory)
 
-def get_db():
-    """Generator function to get database session"""
-    db = Session()
-    try:
-        yield db
-    finally:
-        db.close()
+def get_db_session():
+    """Create and return a new database session"""
+    return Session()
 
-def init_db():
+def init_db(Base):
     """Initialize the database with all defined models"""
-    from .database import Base
-    
     # Make sure the directory exists
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     
