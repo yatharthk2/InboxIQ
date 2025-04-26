@@ -1,7 +1,6 @@
 import os
 import pickle
 import json
-import sqlite3
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -12,49 +11,39 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.send',
           'https://www.googleapis.com/auth/gmail.labels',
           'https://www.googleapis.com/auth/gmail.modify']
 
-# Database path
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inboxiq.db')
-
 def create_gmail_token(user_id=None, email_address=None):
     """Create Gmail API token for authentication.
     
     Args:
-        user_id: Optional user ID to store token for specific user
-        email_address: Optional email address to associate with this token
+        user_id: Optional user ID to use in the token filename
+        email_address: Optional email address to use in the token filename
     """
     creds = None
     
-    # If user_id is provided, try to get credentials from database
+    # Determine the token filename
     if user_id and email_address:
+        token_filename = f'token_{user_id}_{email_address.replace("@", "_at_")}.json'
+    else:
+        token_filename = 'token.json'
+    
+    # Try to load existing token if it exists
+    if os.path.exists(token_filename):
         try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            
-            # Check if the user exists
-            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-            if not cursor.fetchone():
-                print(f"Error: User with ID {user_id} not found.")
-                conn.close()
-                return False
-                
-            # Check if email account already exists
-            cursor.execute(
-                "SELECT credentials_json FROM email_accounts WHERE user_id = ? AND email_address = ?",
-                (user_id, email_address)
-            )
-            result = cursor.fetchone()
-            
-            if result:
-                creds_json = result[0]
-                creds = pickle.loads(creds_json) if isinstance(creds_json, bytes) else json.loads(creds_json)
-            
-            conn.close()
+            with open(token_filename, 'r') as token_file:
+                creds_data = json.load(token_file)
+                # Convert the JSON data back to credentials
+                creds = InstalledAppFlow.from_client_config({
+                    "installed": creds_data
+                }, SCOPES).credentials
         except Exception as e:
-            print(f"Database error: {e}")
-    elif os.path.exists('token.pickle'):
-        # Legacy path for non-user-specific operations
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
+            print(f"Error loading existing token: {e}")
+    # For backward compatibility, check for pickle file
+    elif os.path.exists('token.pickle') and not user_id and not email_address:
+        try:
+            with open('token.pickle', 'rb') as token:
+                creds = pickle.load(token)
+        except Exception as e:
+            print(f"Error loading legacy token: {e}")
     
     # If no valid credentials, let user log in
     if not creds or not creds.valid:
@@ -65,31 +54,14 @@ def create_gmail_token(user_id=None, email_address=None):
                 'credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         
-        # Save the credentials
-        if user_id and email_address:
-            try:
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                
-                # Store in database
-                cursor.execute(
-                    """
-                    INSERT INTO email_accounts (user_id, email_address, credentials_json) 
-                    VALUES (?, ?, ?) 
-                    ON CONFLICT (user_id, email_address) 
-                    DO UPDATE SET credentials_json = ?, last_updated = CURRENT_TIMESTAMP
-                    """,
-                    (user_id, email_address, json.dumps(creds.to_json()), json.dumps(creds.to_json()))
-                )
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                print(f"Database error when saving token: {e}")
-                return False
-        else:
-            # Legacy path
-            with open('token.pickle', 'wb') as token:
-                pickle.dump(creds, token)
+        # Save the credentials locally as JSON
+        try:
+            with open(token_filename, 'w') as token:
+                json.dump(json.loads(creds.to_json()), token, indent=2)
+            print(f"Token saved locally as {token_filename}")
+        except Exception as e:
+            print(f"Error when saving token: {e}")
+            return False
     
     # Test the credentials
     try:
@@ -100,22 +72,15 @@ def create_gmail_token(user_id=None, email_address=None):
         # If email_address wasn't provided but we authenticated successfully, update it
         if user_id and not email_address:
             email_address = profile['emailAddress']
+            new_token_filename = f'token_{user_id}_{email_address.replace("@", "_at_")}.json'
+            
+            # Save with the updated filename
             try:
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO email_accounts (user_id, email_address, credentials_json) 
-                    VALUES (?, ?, ?) 
-                    ON CONFLICT (user_id, email_address) 
-                    DO UPDATE SET credentials_json = ?, last_updated = CURRENT_TIMESTAMP
-                    """,
-                    (user_id, email_address, json.dumps(creds.to_json()), json.dumps(creds.to_json()))
-                )
-                conn.commit()
-                conn.close()
+                with open(new_token_filename, 'w') as token:
+                    json.dump(json.loads(creds.to_json()), token, indent=2)
+                print(f"Token also saved as {new_token_filename}")
             except Exception as e:
-                print(f"Database error when updating email: {e}")
+                print(f"Error when saving token with updated email: {e}")
         
         return True
     except Exception as e:
@@ -128,12 +93,12 @@ if __name__ == "__main__":
     print("This script will create a token for Gmail API access.")
     
     # Check if operating in user mode or legacy mode
-    use_user_mode = input("Do you want to store the token for a specific user? (y/n): ").lower().startswith('y')
+    use_user_mode = input("Do you want to create a user-specific token? (y/n): ").lower().startswith('y')
     
     if use_user_mode:
         try:
-            user_id = int(input("Enter user ID: "))
-            email = input("Enter user's Gmail address (or leave blank to detect): ").strip()
+            user_id = input("Enter user identifier: ")
+            email = input("Enter Gmail address (or leave blank to detect): ").strip()
             email_address = email if email else None
             
             if not os.path.exists('credentials.json'):
@@ -149,8 +114,8 @@ if __name__ == "__main__":
             else:
                 print("\nFailed to create token. Please check your credentials and try again.")
         
-        except ValueError:
-            print("Error: User ID must be a number.")
+        except ValueError as e:
+            print(f"Error: {e}")
     else:
         # Legacy mode
         if not os.path.exists('credentials.json'):
