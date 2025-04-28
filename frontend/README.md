@@ -1,54 +1,45 @@
-# React + TypeScript + Vite
+<h1 align="center">
+  InboxIQ - Email Productivity Hub
+</h1>
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+<h2 align="center">
+  A unified email management platform to streamline communication and enhance productivity
+</h2>
 
-Currently, two official plugins are available:
+## Overview
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+InboxIQ is a centralized email management platform that streamlines communication, enhances productivity, and reduces procrastination by leveraging natural language processing and agentic automation. This hub consolidates multiple email accounts, integrates with productivity tools, and provides intelligent workflows to manage emails efficiently.
 
-## Expanding the ESLint configuration
+## Key Features
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- **Natural Language Email Handling**: Compose and send emails using conversational commands
+- **Automated Workflows and Follow-Ups**: Set up routines for email threads to automate repetitive tasks
+- **Intelligent Monitoring**: Get proactive notifications for action-required messages
+- **Unified Email Management**: Consolidate all email accounts under one interface with tagging
+- **Agentic Integrations**: Seamless integration with Google Drive, Meet, Calendar, and more
 
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
-```
+## Getting Started
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Prerequisites
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+* [Node.js](https://nodejs.org/) (with npm)
+* Google account for API integration
 
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-})
-```
+### Installation
+
+* `git clone https://github.com/yourusername/inboxiq.git`
+* `cd inboxiq/frontend`
+* `npm install`
+
+### Running / Development
+
+* `npm run dev`
+* Visit your app at [http://localhost:3000](http://localhost:3000).
+
+## Technologies Used
+
+- [React](https://reactjs.org/) - Frontend library
+- [TypeScript](https://www.typescriptlang.org/) - Type-safe JavaScript
+- [Next.js](https://nextjs.org/) - React framework
+- [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
+- [Framer Motion](https://www.framer.com/motion/) - Animation library

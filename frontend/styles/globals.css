@@ -1,0 +1,94 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 15, 23, 42;
+  --background-end-rgb: 30, 41, 59;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb));
+  @apply font-sans antialiased;
+}
+
+@layer base {
+  h1 {
+    @apply text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight;
+  }
+  
+  h2 {
+    @apply text-3xl md:text-4xl font-bold tracking-tight;
+  }
+  
+  h3 {
+    @apply text-2xl md:text-3xl font-semibold;
+  }
+  
+  a {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-6 py-3 rounded-md font-medium transition-all duration-300 inline-flex items-center justify-center;
+  }
+  
+  .btn-primary {
+    @apply bg-primary text-white hover:bg-primary-dark shadow-md hover:shadow-lg hover:shadow-primary/20;
+  }
+  
+  .btn-outline {
+    @apply border border-dark-border text-white hover:border-primary hover:text-primary;
+  }
+  
+  .btn-sm {
+    @apply px-4 py-2 text-sm;
+  }
+  
+  .btn-lg {
+    @apply px-8 py-3.5 text-lg;
+  }
+  
+  .container-custom {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+  
+  .heading-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary via-primary-light to-secondary;
+  }
+  
+  .card {
+    @apply rounded-xl p-6 bg-dark-card border border-dark-border shadow-soft transition-all duration-300;
+  }
+  
+  .feature-icon {
+    @apply bg-gradient-to-br from-primary to-primary-light p-3 rounded-lg text-white mb-5 shadow-md;
+  }
+  
+  .glass-effect {
+    @apply backdrop-blur-lg bg-white/10 border border-white/20;
+  }
+  
+  .section {
+    @apply py-16 md:py-24 lg:py-32;
+  }
+  
+  .input {
+    @apply w-full px-4 py-3 bg-dark-card border border-dark-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary text-white transition-all duration-200;
+  }
+  
+  .label {
+    @apply block text-sm font-medium text-gray-300 mb-1;
+  }
+}
