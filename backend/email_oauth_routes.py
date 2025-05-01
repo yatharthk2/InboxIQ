@@ -1,6 +1,7 @@
 import os
 import json
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from flask import Flask, request, redirect, url_for, session, jsonify
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -13,8 +14,20 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.send',
           'https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.modify']
 
-# Database path
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inboxiq.db')
+# PostgreSQL connection parameters
+DB_PARAMS = {
+    "dbname": "inboxiq",
+    "user": "postgres",
+    "password": "Bazinga#1702",
+    "host": "localhost",
+    "port": "5432"
+}
+
+def get_db_connection():
+    """Create a connection to PostgreSQL database."""
+    conn = psycopg2.connect(**DB_PARAMS, cursor_factory=RealDictCursor)
+    conn.autocommit = False
+    return conn
 
 @app.route('/auth/gmail/start', methods=['GET'])
 def start_gmail_auth():
@@ -80,25 +93,27 @@ def oauth2callback():
     
     # Store credentials in database
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Check if the user exists
-        cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+        cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
         if not cursor.fetchone():
             conn.close()
             return jsonify({"error": f"User with ID {user_id} not found"}), 404
             
-        # Store or update email account credentials
+        # Store or update email account credentials using PostgreSQL's ON CONFLICT syntax
         cursor.execute(
             """
-            INSERT INTO email_accounts (user_id, email_address, credentials_json) 
-            VALUES (?, ?, ?) 
+            INSERT INTO email_accounts (user_id, email_address, provider_type, oauth_tokens) 
+            VALUES (%s, %s, %s, %s) 
             ON CONFLICT (user_id, email_address) 
-            DO UPDATE SET credentials_json = ?, last_updated = CURRENT_TIMESTAMP
+            DO UPDATE SET oauth_tokens = %s, last_sync = CURRENT_TIMESTAMP
+            RETURNING id
             """,
-            (user_id, email_address, credentials.to_json(), credentials.to_json())
+            (user_id, email_address, 'gmail', credentials.to_json(), credentials.to_json())
         )
+        
         conn.commit()
         conn.close()
         

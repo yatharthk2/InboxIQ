@@ -8,6 +8,7 @@ except ImportError:
 import datetime
 import json
 import os
+import uuid
 
 def populate_db():
     """Manually populate the database with sample data."""
@@ -18,12 +19,13 @@ def populate_db():
         # Use a dummy hashed password for now (replace with real hash in production)
         hashed_password = "dummyhashedpassword"
         preferences = {}
-        created_at = datetime.datetime.utcnow()
+        created_at = datetime.datetime.now(datetime.timezone.utc)
 
         # Check if user already exists
         user = session.query(User).filter_by(email=user_email).first()
         if not user:
             user = User(
+                user_id=uuid.uuid4(),  # Use UUID instead of string
                 email=user_email,
                 hashed_password=hashed_password,
                 preferences=preferences,

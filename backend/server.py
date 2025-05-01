@@ -29,7 +29,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.send',
 mcp = FastMCP("gmail-tools")
 
 # Database setup
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'db', 'inboxiq.db')
+DATABASE_URL = "postgresql://postgres:Bazinga#1702@localhost:5432/inboxiq"
 
 # Replace the old init_db function
 def initialize_database():
