@@ -6,12 +6,39 @@ import {
   FiClock, FiMessageSquare
 } from 'react-icons/fi';
 
+// Define interface for email structure
+interface Email {
+  id: string;
+  sender: string;
+  subject: string;
+  snippet: string;
+  date: string;
+  category: string;
+}
+
+// Add new interfaces for email categories
+type EmailCategory = 'work' | 'personal' | 'updates' | 'finance' | 'other';
+
+interface EmailCategoriesState {
+  [key: string]: string[];  // Index signature allowing any string key
+  work: string[];
+  personal: string[];
+  updates: string[];
+  finance: string[];
+  other: string[];
+}
+
 interface EmailTagAssignmentStepProps {
   onComplete: () => void;
   onSkip: () => void;
   onBack: () => void;
   connectedAccounts: any[];
   tags: any[];
+}
+
+interface TagSuggestion {
+  id: string;
+  confidence: number;
 }
 
 export default function EmailTagAssignmentStep({ 
@@ -22,10 +49,10 @@ export default function EmailTagAssignmentStep({
   tags
 }: EmailTagAssignmentStepProps) {
   const [isLoading, setIsLoading] = useState(true);
-  const [sampleEmails, setSampleEmails] = useState([]);
-  const [suggestedTags, setSuggestedTags] = useState({});
-  const [appliedTags, setAppliedTags] = useState({});
-  const [emailCategories, setEmailCategories] = useState({
+  const [sampleEmails, setSampleEmails] = useState<Email[]>([]);
+  const [suggestedTags, setSuggestedTags] = useState<Record<string, TagSuggestion[]>>({});
+  const [appliedTags, setAppliedTags] = useState<Record<string, string[]>>({});
+  const [emailCategories, setEmailCategories] = useState<EmailCategoriesState>({
     work: [],
     personal: [],
     updates: [],
@@ -133,7 +160,7 @@ export default function EmailTagAssignmentStep({
       setSampleEmails(demoEmails);
       
       // Group emails by category
-      const categories = {
+      const categories: EmailCategoriesState = {
         work: [],
         personal: [],
         updates: [],
@@ -153,7 +180,7 @@ export default function EmailTagAssignmentStep({
       setEmailCategories(categories);
       
       // Initialize appliedTags with empty arrays
-      const initialApplied = {};
+      const initialApplied: Record<string, string[]> = {};
       demoEmails.forEach(email => {
         initialApplied[email.id] = [];
       });
@@ -177,12 +204,12 @@ export default function EmailTagAssignmentStep({
       await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Create smart tag suggestions for each email
-      const suggestions = {};
-      const newAppliedTags = { ...appliedTags };
+      const suggestions: Record<string, TagSuggestion[]> = {};
+      const newAppliedTags: Record<string, string[]> = { ...appliedTags };
       
       sampleEmails.forEach(email => {
         // Generate tag recommendations based on email content
-        const recommended = [];
+        const recommended: TagSuggestion[] = [];
         
         // Example logic for tag suggestions based on content analysis
         if (email.subject.toLowerCase().includes('pull request') || 
@@ -253,7 +280,7 @@ export default function EmailTagAssignmentStep({
     }
   };
 
-  const toggleTag = (emailId, tagId) => {
+  const toggleTag = (emailId: string, tagId: string) => {
     setAppliedTags(prev => {
       const currentTags = [...(prev[emailId] || [])];
       const tagIndex = currentTags.indexOf(tagId);
@@ -269,7 +296,7 @@ export default function EmailTagAssignmentStep({
     });
   };
 
-  const applyTagToAll = (tagId) => {
+  const applyTagToAll = (tagId: string) => {
     const newAppliedTags = { ...appliedTags };
     
     // Apply to emails matching current filter
@@ -320,7 +347,7 @@ export default function EmailTagAssignmentStep({
     );
   };
 
-  const getTagById = (tagId) => {
+  const getTagById = (tagId: string) => {
     return enhancedTags.find(tag => tag.id === tagId);
   };
 
@@ -332,7 +359,7 @@ export default function EmailTagAssignmentStep({
           <FiInfo size={48} className="mx-auto text-yellow-500" />
           <h2 className="text-2xl font-bold mb-2 mt-4">No Accounts or Tags</h2>
           <p className="text-gray-400">
-            You need to connect at least one email account and create at least one tag 
+            You&apos;ll need to connect at least one email account and create at least one tag 
             before you can assign tags to emails.
           </p>
         </div>
@@ -357,7 +384,7 @@ export default function EmailTagAssignmentStep({
     <div>
       <h2 className="text-2xl font-bold mb-1">Smart Email Organization</h2>
       <p className="text-gray-400 mb-6">
-        Let's organize your inbox with tags. Our AI can analyze your emails and suggest appropriate tags,
+        Let&apos;s organize your inbox with tags. Our AI can analyze your emails and suggest appropriate tags,
         or you can assign them manually.
       </p>
       
@@ -416,7 +443,7 @@ export default function EmailTagAssignmentStep({
                 <div>
                   <h3 className="font-medium mb-2">AI Tagging Complete</h3>
                   <p className="text-gray-400 text-sm">
-                    We've analyzed your emails and applied tags automatically. 
+                    We&apos;ve analyzed your emails and applied tags automatically. 
                     You can adjust these tags or continue with our suggestions.
                   </p>
                 </div>
@@ -530,8 +557,8 @@ export default function EmailTagAssignmentStep({
                       <p className="text-xs text-gray-500 mb-1">Suggested tags:</p>
                       <div className="flex flex-wrap gap-2">
                         {suggestedTags[email.id]
-                          .filter(suggestion => !appliedTags[email.id]?.includes(suggestion.id))
-                          .map(suggestion => {
+                          .filter((suggestion: TagSuggestion) => !appliedTags[email.id]?.includes(suggestion.id))
+                          .map((suggestion: TagSuggestion) => {
                             const tag = getTagById(suggestion.id);
                             return tag ? (
                               <button

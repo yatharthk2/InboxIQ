@@ -41,7 +41,7 @@ export default function Login() {
       router.push('/dashboard');
       
     } catch (err) {
-      setError(err.message || 'An error occurred during login');
+      setError(err instanceof Error ? err.message : 'An error occurred during login');
     } finally {
       setIsLoading(false);
     }
@@ -140,7 +140,7 @@ export default function Login() {
             </Button>
 
             <div className="text-center text-sm text-gray-400">
-              Don't have an account?{' '}
+              Don&apos;t have an account?{' '}
               <Link href="/signup" className="text-primary hover:text-primary-dark">
                 Sign up
               </Link>

@@ -50,9 +50,15 @@ export default function GmailConnectStep({
         `width=${width},height=${height},left=${left},top=${top}`
       );
       
+      if (!popup) {
+        setError('Popup was blocked. Please allow popups for this site and try again.');
+        setIsConnecting(false);
+        return;
+      }
+      
       // Poll to check if the popup has been closed or if the connection was successful
       const checkConnectInterval = setInterval(async () => {
-        if (popup.closed) {
+        if (popup?.closed) {
           clearInterval(checkConnectInterval);
           
           // Check with the backend if the account was connected
@@ -79,7 +85,10 @@ export default function GmailConnectStep({
       }, 1000);
       
     } catch (err) {
-      setError(err.message || 'An error occurred while connecting to Gmail.');
+      const errorMessage = err instanceof Error 
+        ? err.message 
+        : 'An error occurred while connecting to Gmail.';
+      setError(errorMessage);
       setIsConnecting(false);
     }
   };

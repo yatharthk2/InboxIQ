@@ -20,7 +20,7 @@ export default function CompletionStep({ onFinish, accounts, tags, llmProvider }
       
       <h2 className="text-2xl font-bold mb-2">Setup Complete!</h2>
       <p className="text-gray-400 mb-8">
-        You're all set to start using InboxIQ. Here's a summary of what you've configured:
+        You&apos;re all set to start using InboxIQ. Here&apos;s a summary of what you&apos;ve configured:
       </p>
       
       <div className="bg-dark-bg border border-dark-border rounded-lg p-5 mb-8">
@@ -87,7 +87,7 @@ export default function CompletionStep({ onFinish, accounts, tags, llmProvider }
       </div>
       
       <div className="mb-8">
-        <h3 className="font-medium mb-2">Here's what you can do next:</h3>
+        <h3 className="font-medium mb-2">Here&apos;s what you can do next:</h3>
         <ul className="text-gray-400 text-left space-y-2">
           <li className="flex items-start">
             <span className="inline-block bg-primary/20 text-primary rounded-full p-1 mr-2 mt-1">

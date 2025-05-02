@@ -2,7 +2,17 @@ import React, { useState } from 'react';
 import Button from '@/components/Button';
 import { FiKey, FiExternalLink, FiLoader } from 'react-icons/fi';
 
-const LLM_PROVIDERS = [
+interface LlmProvider {
+  id: string;
+  name: string;
+  logo: string;
+  description: string;
+  pricing: string;
+  models: string[];
+  docsUrl: string;
+}
+
+const LLM_PROVIDERS: LlmProvider[] = [
   {
     id: 'openai',
     name: 'OpenAI',
@@ -39,14 +49,14 @@ interface LlmProviderStepProps {
 }
 
 export default function LlmProviderStep({ onSelect, onSkip, onBack }: LlmProviderStepProps) {
-  const [selectedProvider, setSelectedProvider] = useState(null);
+  const [selectedProvider, setSelectedProvider] = useState<LlmProvider | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   
-  const handleProviderSelect = (provider) => {
+  const handleProviderSelect = (provider: LlmProvider) => {
     setSelectedProvider(provider);
     setShowApiKeyInput(true);
     // Set default model to first in the list for this provider
@@ -93,7 +103,7 @@ export default function LlmProviderStep({ onSelect, onSkip, onBack }: LlmProvide
         });
         
       } catch (err) {
-        setError(err.message || 'An error occurred while saving the API key');
+        setError(err instanceof Error ? err.message : 'An error occurred while saving the API key');
         setIsLoading(false);
       }
     }
@@ -103,8 +113,8 @@ export default function LlmProviderStep({ onSelect, onSkip, onBack }: LlmProvide
     <div>
       <h2 className="text-2xl font-bold mb-2">Select AI Provider</h2>
       <p className="text-gray-400 mb-6">
-        Choose an AI provider to power InboxIQ's intelligent features.
-        You'll need an API key from your selected provider.
+        Choose an AI provider to power InboxIQ&apos;s intelligent features.
+        You&apos;ll need an API key from your selected provider.
       </p>
       
       {error && (
@@ -151,7 +161,7 @@ export default function LlmProviderStep({ onSelect, onSkip, onBack }: LlmProvide
             </div>
           ))}
         </div>
-      ) : (
+      ) : selectedProvider ? (
         <div className="bg-dark-bg border border-dark-border rounded-lg p-5 mb-6">
           <h3 className="text-lg font-medium mb-3">Connect {selectedProvider.name}</h3>
           <p className="text-sm text-gray-400 mb-4">
@@ -218,7 +228,7 @@ export default function LlmProviderStep({ onSelect, onSkip, onBack }: LlmProvide
             </a>
           </div>
         </div>
-      )}
+      ) : null}
       
       <div className="flex gap-4">
         <Button 

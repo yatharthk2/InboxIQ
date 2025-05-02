@@ -469,7 +469,7 @@ const Testimonial: React.FC<{quote: string; author: string; role: string}> = ({ 
       transition={{ duration: 0.5 }}
       className="bg-dark-card border border-dark-border rounded-xl p-6 shadow-soft"
     >
-      <div className="text-primary text-4xl mb-4">"</div>
+      <div className="text-primary text-4xl mb-4">&ldquo;</div>
       <p className="text-gray-300 mb-6">{quote}</p>
       <div>
         <p className="font-medium">{author}</p>

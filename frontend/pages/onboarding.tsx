@@ -15,12 +15,40 @@ const STEPS = {
   COMPLETION: 3
 };
 
+// Define the interface for connected Gmail accounts
+interface ConnectedAccount {
+  email: string;
+  id?: string;
+}
+
+// Define the interface for tags
+interface Tag {
+  id?: string;
+  name: string;
+  color?: string;
+}
+
+// Define the interface for LLM providers
+interface LlmProvider {
+  id?: string;
+  name: string;
+  apiKey?: string;
+  model?: string;
+}
+
+// Define the interface for user
+interface User {
+  id: string;
+  email?: string;
+  name?: string;
+}
+
 export default function Onboarding() {
   const [currentStep, setCurrentStep] = useState(STEPS.GMAIL_CONNECT);
-  const [user, setUser] = useState(null);
-  const [connectedAccounts, setConnectedAccounts] = useState([]);
-  const [tags, setTags] = useState([]);
-  const [selectedLlmProvider, setSelectedLlmProvider] = useState(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [selectedLlmProvider, setSelectedLlmProvider] = useState<LlmProvider | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
@@ -49,17 +77,17 @@ export default function Onboarding() {
     setCurrentStep(STEPS.COMPLETION);
   };
 
-  const handleGmailConnect = (account) => {
+  const handleGmailConnect = (account: ConnectedAccount) => {
     setConnectedAccounts(prev => [...prev, account]);
     goToNextStep();
   };
 
-  const handleTagsCreated = (createdTags) => {
+  const handleTagsCreated = (createdTags: Tag[]) => {
     setTags(createdTags);
     goToNextStep();
   };
 
-  const handleLlmProviderSelected = (provider) => {
+  const handleLlmProviderSelected = (provider: LlmProvider) => {
     setSelectedLlmProvider(provider);
     goToNextStep();
   };
@@ -123,7 +151,7 @@ export default function Onboarding() {
                 onConnect={handleGmailConnect} 
                 onSkip={goToNextStep}
                 connectedAccounts={connectedAccounts}
-                userId={user?.id}
+                userId={user?.id || ''}
               />
             )}
             {currentStep === STEPS.TAG_CREATION && (

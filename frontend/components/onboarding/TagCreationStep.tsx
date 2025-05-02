@@ -2,8 +2,15 @@ import React, { useState } from 'react';
 import Button from '@/components/Button';
 import { FiTag, FiPlusCircle, FiX, FiLoader } from 'react-icons/fi';
 
+// Define Tag interface
+interface Tag {
+  name: string;
+  color: string;
+  priority: number;
+}
+
 // Suggested tag options without preselection - now with priority field
-const SUGGESTED_TAGS = [
+const SUGGESTED_TAGS: Tag[] = [
   { name: 'Work', color: '#4caf50', priority: 0 },
   { name: 'Personal', color: '#2196f3', priority: 1 },
   { name: 'Important', color: '#f44336', priority: 2 },
@@ -12,14 +19,14 @@ const SUGGESTED_TAGS = [
 ];
 
 interface TagCreationStepProps {
-  onComplete: (tags: any[]) => void;
+  onComplete: (tags: Tag[]) => void;
   onSkip: () => void;
   onBack: () => void;
 }
 
 export default function TagCreationStep({ onComplete, onSkip, onBack }: TagCreationStepProps) {
   // Start with an empty selection instead of preselected tags
-  const [selectedTags, setSelectedTags] = useState<any[]>([]);
+  const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#6200ea');
   const [newTagPriority, setNewTagPriority] = useState(0);
@@ -27,7 +34,7 @@ export default function TagCreationStep({ onComplete, onSkip, onBack }: TagCreat
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const handleTagSelection = (tag) => {
+  const handleTagSelection = (tag: Tag) => {
     const exists = selectedTags.some(t => t.name === tag.name);
     
     if (exists) {
@@ -39,7 +46,7 @@ export default function TagCreationStep({ onComplete, onSkip, onBack }: TagCreat
 
   const addNewTag = () => {
     if (newTagName.trim()) {
-      const newTag = {
+      const newTag: Tag = {
         name: newTagName.trim(),
         color: newTagColor,
         priority: newTagPriority
@@ -81,7 +88,7 @@ export default function TagCreationStep({ onComplete, onSkip, onBack }: TagCreat
       // Call the original onComplete but with the tags including their database IDs
       onComplete(data.tags);
     } catch (err) {
-      setError(err.message || 'An error occurred while saving tags');
+      setError(err instanceof Error ? err.message : 'An error occurred while saving tags');
       setIsSaving(false);
     }
   };

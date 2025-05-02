@@ -136,6 +136,11 @@ export default async function handler(
   } catch (error) {
     console.error('Gmail callback error:', error);
     
+    // Get error message safely, handling different error types
+    const errorMessage = error instanceof Error 
+      ? error.message 
+      : 'An unknown error occurred';
+    
     // Return an error page
     return res.status(500).send(`
       <!DOCTYPE html>
@@ -187,7 +192,7 @@ export default async function handler(
             // Notify the parent window that the connection failed
             window.opener.postMessage({
               type: 'GMAIL_CONNECTION_FAILED',
-              error: '${error.message.replace(/'/g, "\\'")}'
+              error: '${errorMessage.replace(/'/g, "\\'")}'
             }, '*');
             
             // Close the popup after a short delay
