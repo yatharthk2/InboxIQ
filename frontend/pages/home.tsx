@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
+import Link from 'next/link'; // Import Link
 import { motion, AnimatePresence } from 'framer-motion';
 import { FiSend, FiUser, FiMessageSquare, FiInbox, FiSettings, FiLogOut, FiMenu, FiX, FiChevronRight } from 'react-icons/fi';
 
@@ -21,7 +22,7 @@ export default function Home() {
   const [user, setUser] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const router = useRouter();
+  const router = useRouter(); // Ensure router is initialized
   
   // Check auth status on mount
   useEffect(() => {
@@ -184,21 +185,16 @@ export default function Home() {
             </div>
             
             <nav className="space-y-1.5 mb-8">
-              <SidebarItem icon={<FiInbox />} text="Inbox" isActive={false} />
-              <SidebarItem icon={<FiMessageSquare />} text="Chat" isActive={true} />
-              <SidebarItem icon={<FiUser />} text="Profile" isActive={false} />
-              <SidebarItem icon={<FiSettings />} text="Settings" isActive={false} />
+              {/* Updated Sidebar Items */}
+              <SidebarItem icon={<FiMessageSquare />} text="Chat History" isActive={router.pathname === '/home'} />
+              {/* Wrap Profile item with Link */}
+              <Link href="/settings" passHref legacyBehavior>
+                <a onClick={() => setIsSidebarOpen(false)}> {/* Close sidebar on click */}
+                  <SidebarItem icon={<FiUser />} text="Profile" isActive={router.pathname === '/settings'} />
+                </a>
+              </Link>
+              <SidebarItem icon={<FiLogOut />} text="Logout" isActive={false} onClick={handleLogout} />
             </nav>
-            
-            <div className="absolute bottom-5 w-full left-0 px-5">
-              <button 
-                onClick={handleLogout}
-                className="flex items-center text-gray-400 hover:text-white transition-colors w-full p-2"
-              >
-                <FiLogOut className="mr-2" />
-                <span>Logout</span>
-              </button>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -315,13 +311,17 @@ export default function Home() {
   );
 }
 
+// Update SidebarItemProps to include optional onClick
 type SidebarItemProps = {
   icon: React.ReactNode;
   text: string;
   isActive: boolean;
+  onClick?: () => void; // onClick remains optional
 };
 
-const SidebarItem: React.FC<SidebarItemProps> = ({ icon, text, isActive }) => {
+// Update SidebarItem component to handle onClick
+const SidebarItem: React.FC<SidebarItemProps> = ({ icon, text, isActive, onClick }) => {
+  // The component itself doesn't need Link, the parent wraps it
   return (
     <div 
       className={`flex items-center p-2.5 rounded-lg cursor-pointer transition-all ${
@@ -329,6 +329,7 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon, text, isActive }) => {
           ? 'bg-primary text-white shadow-md' 
           : 'text-gray-400 hover:bg-dark-bg hover:text-white'
       }`}
+      onClick={onClick} // Use onClick for actions like logout
     >
       <span className="mr-3">{icon}</span>
       <span>{text}</span>
