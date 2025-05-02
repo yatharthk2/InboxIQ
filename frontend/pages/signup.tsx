@@ -45,7 +45,7 @@ export default function Signup() {
       localStorage.setItem('authToken', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       
-      // Redirect to dashboard or onboarding page
+      // Redirect to onboarding page (we'll keep this for now)
       router.push('/onboarding');
       
     } catch (err) {

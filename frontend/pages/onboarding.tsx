@@ -93,7 +93,7 @@ export default function Onboarding() {
   };
 
   const finishOnboarding = () => {
-    router.push('/dashboard');
+    router.push('/home');
   };
 
   if (isLoading) {

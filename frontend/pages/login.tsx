@@ -37,8 +37,8 @@ export default function Login() {
       localStorage.setItem('authToken', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       
-      // Redirect to dashboard or home page
-      router.push('/dashboard');
+      // Redirect to home page instead of dashboard
+      router.push('/home');
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred during login');

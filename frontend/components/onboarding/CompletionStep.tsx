@@ -125,7 +125,7 @@ export default function CompletionStep({ onFinish, accounts, tags, llmProvider }
         size="lg"
         className="w-full sm:w-auto"
       >
-        Take Me to Dashboard
+        Go to Home
       </Button>
     </div>
   );
