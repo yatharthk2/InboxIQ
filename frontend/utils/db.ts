@@ -404,3 +404,43 @@ export async function getUserTags(userId: string) {
     throw error;
   }
 }
+
+// Helper to get user's LLM integrations
+export async function getUserLlmIntegrations(userId: string) {
+  try {
+    // First, get the numeric user ID from the UUID
+    const userResult = await query(
+      'SELECT id FROM users WHERE user_id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      throw new Error('User not found');
+    }
+
+    const numericUserId = userResult.rows[0].id;
+
+    // Get all LLM keys and provider details for the user
+    const result = await query(
+      `SELECT
+         ulk.id AS key_id,
+         ulk.provider_id,
+         ulk.is_active,
+         ulk.default_model,
+         ulk.last_used,
+         lp.name AS provider_name,
+         lp.display_name AS provider_display_name,
+         lp.logo_url AS provider_logo_url
+       FROM userllmkeys ulk
+       JOIN llmproviders lp ON ulk.provider_id = lp.id
+       WHERE ulk.user_id = $1
+       ORDER BY lp.display_name`,
+      [numericUserId]
+    );
+
+    return result.rows;
+  } catch (error) {
+    console.error('Error getting LLM integrations:', error);
+    throw error; // Re-throw the error to be handled by the caller
+  }
+}
