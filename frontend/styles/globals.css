@@ -61,19 +61,19 @@ body {
   }
   
   .container-custom {
-    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+    @apply max-w-7xl mx-auto;
   }
   
   .heading-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary via-primary-light to-secondary;
+    @apply bg-gradient-to-r from-primary-light via-primary to-secondary bg-clip-text text-transparent;
   }
   
   .card {
-    @apply rounded-xl p-6 bg-dark-card border border-dark-border shadow-soft transition-all duration-300;
+    @apply p-6 bg-dark-card border border-dark-border rounded-xl transition-all duration-300;
   }
   
   .feature-icon {
-    @apply bg-gradient-to-br from-primary to-primary-light p-3 rounded-lg text-white mb-5 shadow-md;
+    @apply w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center text-primary mb-4;
   }
   
   .glass-effect {
@@ -91,4 +91,32 @@ body {
   .label {
     @apply block text-sm font-medium text-gray-300 mb-1;
   }
+}
+
+/* Animations for typing indicator */
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.8);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(79, 70, 229, 0.6);
 }

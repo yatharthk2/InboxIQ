@@ -24,6 +24,7 @@ InboxIQ is a centralized email management platform that streamlines communicatio
 
 * [Node.js](https://nodejs.org/) (with npm)
 * Google account for API integration
+* PostgreSQL database
 
 ### Installation
 
@@ -31,10 +32,36 @@ InboxIQ is a centralized email management platform that streamlines communicatio
 * `cd inboxiq/frontend`
 * `npm install`
 
+### Configuration
+
+1. Create a `.env.local` file in the frontend directory with the following variables:
+```
+DATABASE_URL=postgresql://username:password@localhost:5432/inboxiq
+JWT_SECRET=your-jwt-secret
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/gmail-callback
+```
+
+2. To use Gmail integration, you'll need to:
+   * Create a project in Google Cloud Console
+   * Enable Gmail API
+   * Create OAuth 2.0 credentials
+   * Set authorized redirect URIs (including `http://localhost:3000/api/auth/gmail-callback` for local development)
+
 ### Running / Development
 
 * `npm run dev`
 * Visit your app at [http://localhost:3000](http://localhost:3000).
+
+## User Onboarding Flow
+
+InboxIQ features a step-by-step onboarding process to help users get started:
+
+1. **Gmail Account Connection**: Connect your Gmail account(s) securely through OAuth
+2. **Email Tag Creation**: Create custom tags to organize your emails
+3. **LLM Provider Selection**: Connect to an AI provider to enhance email capabilities
+4. **Completion & Dashboard**: Complete setup and start using the application
 
 ## Technologies Used
 
@@ -43,3 +70,5 @@ InboxIQ is a centralized email management platform that streamlines communicatio
 - [Next.js](https://nextjs.org/) - React framework
 - [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
 - [Framer Motion](https://www.framer.com/motion/) - Animation library
+- [PostgreSQL](https://www.postgresql.org/) - Database
+- [Gmail API](https://developers.google.com/gmail/api) - Email integration
