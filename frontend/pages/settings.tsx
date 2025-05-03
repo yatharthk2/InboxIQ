@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
@@ -75,6 +75,11 @@ export default function Settings() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [activeSection, setActiveSection] = useState('llm-integrations'); // Track active section
+  const [isConnectingEmail, setIsConnectingEmail] = useState(false);
+  const [emailConnectError, setEmailConnectError] = useState('');
+  const [showDeleteEmailConfirm, setShowDeleteEmailConfirm] = useState<number | null>(null);
+  const [isDeletingEmail, setIsDeletingEmail] = useState(false);
+  const [emailDeleteError, setEmailDeleteError] = useState('');
 
   // Handle sidebar navigation clicks
   const handleSectionChange = (sectionId: string) => {
@@ -266,6 +271,39 @@ export default function Settings() {
     }
   };
 
+  // Function to delete/disconnect an email account
+  const handleDeleteEmailAccount = async (accountId: number) => {
+    if (!user) return;
+    
+    setIsDeletingEmail(true);
+    setEmailDeleteError('');
+    
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`/api/email/delete-account?accountId=${accountId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to disconnect email account');
+      }
+      
+      // Remove the disconnected account from the state
+      setEmailIntegrations(prev => prev.filter(integration => integration.id !== accountId));
+      setShowDeleteEmailConfirm(null);
+      
+    } catch (error: any) {
+      console.error('Error disconnecting email account:', error);
+      setEmailDeleteError(error.message || 'Failed to disconnect email account');
+    } finally {
+      setIsDeletingEmail(false);
+    }
+  };
+
   const saveIntegration = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
@@ -356,6 +394,83 @@ export default function Settings() {
     
     const model = selectedProvider.models.find(m => m.id === formData.defaultModel);
     return model ? model.name : formData.defaultModel;
+  };
+
+  // Function to initiate Gmail connection
+  const connectGmail = async () => {
+    if (!user) return;
+    
+    setIsConnectingEmail(true);
+    setEmailConnectError('');
+    
+    try {
+      // Get the auth URL from the API
+      const token = localStorage.getItem('authToken');
+      const response = await fetch('/api/auth/gmail-auth-url', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ userId: user.id })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to get authentication URL');
+      }
+      
+      const { authUrl } = await response.json();
+      
+      // Open a popup window for the OAuth flow
+      const width = 600;
+      const height = 700;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+      
+      const popup = window.open(
+        authUrl,
+        'gmail-auth-popup',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+      
+      // Function to handle messages from the popup
+      const handleMessage = (event: MessageEvent) => {
+        // Only process messages from our popup
+        if (popup && event.source === popup) {
+          const { type, email, error } = event.data;
+          
+          if (type === 'GMAIL_CONNECTED' && email) {
+            // Successfully connected Gmail account
+            console.log('Gmail connected:', email);
+            
+            // Refresh email integrations
+            if (user) {
+              fetchEmailIntegrations(user.id, token || '');
+            }
+            
+            // Clean up
+            window.removeEventListener('message', handleMessage);
+          } else if (type === 'GMAIL_CONNECTION_FAILED' && error) {
+            // Failed to connect Gmail account
+            console.error('Gmail connection failed:', error);
+            setEmailConnectError(`Failed to connect: ${error}`);
+            
+            // Clean up
+            window.removeEventListener('message', handleMessage);
+          }
+        }
+      };
+      
+      // Listen for messages from the popup
+      window.addEventListener('message', handleMessage);
+      
+    } catch (error: any) {
+      console.error('Error connecting Gmail:', error);
+      setEmailConnectError(error.message || 'Failed to connect Gmail account');
+    } finally {
+      setIsConnectingEmail(false);
+    }
   };
 
   if (!user) {
@@ -792,11 +907,40 @@ export default function Settings() {
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-lg font-semibold">Email Integration</h2>
                   <button 
-                    className="flex items-center bg-primary text-white px-3 py-1.5 rounded-md hover:bg-primary/90 transition"
+                    onClick={connectGmail}
+                    disabled={isConnectingEmail}
+                    className="flex items-center bg-primary text-white px-3 py-1.5 rounded-md hover:bg-primary/90 transition disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <FiPlus className="mr-1" /> Connect Email
+                    {isConnectingEmail ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                        Connecting...
+                      </>
+                    ) : (
+                      <>
+                        <FiPlus className="mr-1" /> Connect Email
+                      </>
+                    )}
                   </button>
                 </div>
+                
+                {emailConnectError && (
+                  <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-md text-red-400 text-sm">
+                    <div className="flex items-center">
+                      <FiAlertCircle className="mr-2 flex-shrink-0" />
+                      {emailConnectError}
+                    </div>
+                  </div>
+                )}
+                
+                {emailDeleteError && (
+                  <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-md text-red-400 text-sm">
+                    <div className="flex items-center">
+                      <FiAlertCircle className="mr-2 flex-shrink-0" />
+                      {emailDeleteError}
+                    </div>
+                  </div>
+                )}
                 
                 <div className="overflow-hidden rounded-lg border border-dark-border">
                   {isEmailLoading ? (
@@ -854,9 +998,36 @@ export default function Settings() {
                                 <button 
                                   className="text-gray-400 hover:text-red-500"
                                   title="Disconnect account"
+                                  onClick={() => setShowDeleteEmailConfirm(integration.id)}
                                 >
                                   <FiTrash2 size={18} />
                                 </button>
+                                
+                                {showDeleteEmailConfirm === integration.id && (
+                                  <div className="absolute bg-dark-card border border-dark-border rounded-md p-2 shadow-lg z-10 -ml-32">
+                                    <p className="text-xs text-red-400 mb-2">Disconnect this account?</p>
+                                    <div className="flex items-center space-x-2">
+                                      <button 
+                                        className="text-red-500 hover:text-red-400 text-xs px-2 py-1 border border-red-500/30 rounded"
+                                        onClick={() => handleDeleteEmailAccount(integration.id)}
+                                        disabled={isDeletingEmail}
+                                      >
+                                        {isDeletingEmail ? (
+                                          <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin"></div>
+                                        ) : (
+                                          'Disconnect'
+                                        )}
+                                      </button>
+                                      <button 
+                                        className="text-gray-400 hover:text-white text-xs px-2 py-1 border border-dark-border rounded"
+                                        onClick={() => setShowDeleteEmailConfirm(null)}
+                                        disabled={isDeletingEmail}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </td>
                           </tr>

@@ -482,3 +482,41 @@ export async function getUserLlmIntegrations(userId: string) {
     throw error; // Re-throw the error to be handled by the caller
   }
 }
+
+// Helper to delete an email account
+export async function deleteEmailAccount(userId: string, accountId: number) {
+  try {
+    // First, get the numeric user ID from the UUID
+    const userResult = await query(
+      'SELECT id FROM users WHERE user_id = $1',
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      throw new Error('User not found');
+    }
+    
+    const numericUserId = userResult.rows[0].id;
+    
+    // Verify the account belongs to the user before deleting
+    const accountResult = await query(
+      'SELECT id FROM email_accounts WHERE id = $1 AND user_id = $2',
+      [accountId, numericUserId]
+    );
+    
+    if (accountResult.rows.length === 0) {
+      throw new Error('Email account not found or does not belong to the user');
+    }
+    
+    // Delete the account
+    await query(
+      'DELETE FROM email_accounts WHERE id = $1',
+      [accountId]
+    );
+    
+    return true;
+  } catch (error) {
+    console.error('Error deleting email account:', error);
+    throw error;
+  }
+}
