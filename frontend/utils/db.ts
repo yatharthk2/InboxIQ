@@ -377,6 +377,44 @@ export async function saveLlmApiKey(
   }
 }
 
+// Helper to delete LLM API key
+export async function deleteLlmApiKey(userId: string, keyId: number) {
+  try {
+    // First, get the numeric user ID from the UUID
+    const userResult = await query(
+      'SELECT id FROM users WHERE user_id = $1',
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      throw new Error('User not found');
+    }
+    
+    const numericUserId = userResult.rows[0].id;
+    
+    // Verify the key belongs to the user before deleting
+    const keyResult = await query(
+      'SELECT id FROM userllmkeys WHERE id = $1 AND user_id = $2',
+      [keyId, numericUserId]
+    );
+    
+    if (keyResult.rows.length === 0) {
+      throw new Error('API key not found or does not belong to the user');
+    }
+    
+    // Delete the key
+    await query(
+      'DELETE FROM userllmkeys WHERE id = $1',
+      [keyId]
+    );
+    
+    return true;
+  } catch (error) {
+    console.error('Error deleting LLM API key:', error);
+    throw error;
+  }
+}
+
 // Helper to get tags for a user
 export async function getUserTags(userId: string) {
   try {

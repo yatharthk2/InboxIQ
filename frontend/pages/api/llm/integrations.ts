@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getUserLlmIntegrations } from '@/utils/db'; // Adjust path as needed
+import { verifyToken } from '../../../utils/auth';
 
 type LlmIntegrationData = {
   key_id: number;
@@ -30,21 +31,28 @@ export default async function handler(
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  const { userId } = req.query;
-  console.log(`[API /api/llm/integrations] Received userId: ${userId}`); // Log received userId
+  // Verify the user's token
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.log('[API /api/llm/integrations] Error: Unauthorized - No valid token provided.');
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  const token = authHeader.substring(7);
+  const tokenData = verifyToken(token);
+  if (!tokenData) {
+    console.log('[API /api/llm/integrations] Error: Invalid or expired token.');
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+
+  // Use userId from token or from query parameter
+  const userId = req.query.userId || tokenData.sub;
+  console.log(`[API /api/llm/integrations] Using userId: ${userId}`);
 
   if (!userId || typeof userId !== 'string') {
     console.log('[API /api/llm/integrations] Error: User ID is missing or invalid.');
     return res.status(400).json({ message: 'User ID is required' });
   }
-
-  // Optional: Add authentication check here if needed
-  // const token = req.headers.authorization?.split(' ')[1];
-  // if (!token) {
-  //   console.log('[API /api/llm/integrations] Error: Unauthorized - No token provided.');
-  //   return res.status(401).json({ message: 'Unauthorized' });
-  // }
-  // Add token verification logic here...
 
   try {
     console.log(`[API /api/llm/integrations] Calling getUserLlmIntegrations for userId: ${userId}`);

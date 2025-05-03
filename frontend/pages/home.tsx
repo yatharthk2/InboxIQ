@@ -190,7 +190,7 @@ export default function Home() {
               {/* Wrap Profile item with Link */}
               <Link href="/settings" passHref legacyBehavior>
                 <a onClick={() => setIsSidebarOpen(false)}> {/* Close sidebar on click */}
-                  <SidebarItem icon={<FiUser />} text="Profile" isActive={router.pathname === '/settings'} />
+                  <SidebarItem icon={<FiUser />} text="Settings" isActive={router.pathname === '/settings'} />
                 </a>
               </Link>
               <SidebarItem icon={<FiLogOut />} text="Logout" isActive={false} onClick={handleLogout} />
