@@ -17,6 +17,13 @@ type LlmIntegration = {
   provider_logo_url: string | null;
 };
 
+type EmailIntegration = {
+  id: number;
+  email_address: string;
+  provider_type: string;
+  last_sync: string | null;
+};
+
 type Provider = {
   id: string;
   name: string;
@@ -43,7 +50,9 @@ export default function Settings() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [integrations, setIntegrations] = useState<LlmIntegration[]>([]);
+  const [emailIntegrations, setEmailIntegrations] = useState<EmailIntegration[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isEmailLoading, setIsEmailLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [formData, setFormData] = useState<IntegrationFormData>({
     providerId: '',
@@ -91,6 +100,7 @@ export default function Settings() {
       const parsedUser = JSON.parse(storedUser);
       setUser(parsedUser);
       fetchIntegrations(parsedUser.id, token);
+      fetchEmailIntegrations(parsedUser.id, token);
     }
   }, [router]);
 
@@ -125,6 +135,28 @@ export default function Settings() {
       console.error('Error fetching integrations:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchEmailIntegrations = async (userId: string, token: string) => {
+    try {
+      setIsEmailLoading(true);
+      const response = await fetch(`/api/email/integrations?userId=${userId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch email integrations');
+      }
+      
+      const data = await response.json();
+      setEmailIntegrations(data.integrations || []);
+    } catch (error) {
+      console.error('Error fetching email integrations:', error);
+    } finally {
+      setIsEmailLoading(false);
     }
   };
 
@@ -766,12 +798,72 @@ export default function Settings() {
                   </button>
                 </div>
                 
-                <div className="p-8 text-center bg-dark-bg rounded-lg border border-dark-border">
-                  <FiAlertCircle className="mx-auto text-gray-400 mb-2" size={24} />
-                  <p className="text-gray-400 mb-4">No email accounts connected yet.</p>
-                  <p className="text-sm text-gray-500 max-w-md mx-auto">
-                    Connect your email accounts to receive notifications and manage messages directly from InboxIQ.
-                  </p>
+                <div className="overflow-hidden rounded-lg border border-dark-border">
+                  {isEmailLoading ? (
+                    <div className="p-8 text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary mx-auto mb-2"></div>
+                      <p className="text-gray-400">Loading email integrations...</p>
+                    </div>
+                  ) : emailIntegrations.length === 0 ? (
+                    <div className="p-8 text-center bg-dark-bg">
+                      <FiAlertCircle className="mx-auto text-gray-400 mb-2" size={24} />
+                      <p className="text-gray-400 mb-4">No email accounts connected yet.</p>
+                      <p className="text-sm text-gray-500 max-w-md mx-auto">
+                        Connect your email accounts to receive notifications and manage messages directly from InboxIQ.
+                      </p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="bg-dark-bg text-left">
+                        <tr>
+                          <th className="px-4 py-3">Email Address</th>
+                          <th className="px-4 py-3">Provider</th>
+                          <th className="px-4 py-3">Last Sync</th>
+                          <th className="px-4 py-3">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-dark-border">
+                        {emailIntegrations.map((integration) => (
+                          <tr key={integration.id} className="hover:bg-dark-bg/50">
+                            <td className="px-4 py-3">{integration.email_address}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center">
+                                <div className="w-6 h-6 bg-primary/20 text-primary rounded flex items-center justify-center mr-2 text-xs">
+                                  {integration.provider_type === 'gmail' ? 'G' : integration.provider_type.charAt(0).toUpperCase()}
+                                </div>
+                                <span>
+                                  {integration.provider_type === 'gmail' 
+                                    ? 'Gmail' 
+                                    : integration.provider_type.charAt(0).toUpperCase() + integration.provider_type.slice(1)}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              {integration.last_sync 
+                                ? new Date(integration.last_sync).toLocaleString() 
+                                : <span className="text-gray-500">Never</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex space-x-2">
+                                <button 
+                                  className="text-gray-400 hover:text-white"
+                                  title="Sync now"
+                                >
+                                  <FiEdit size={18} />
+                                </button>
+                                <button 
+                                  className="text-gray-400 hover:text-red-500"
+                                  title="Disconnect account"
+                                >
+                                  <FiTrash2 size={18} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </section>
             )}
