@@ -1,7 +1,3 @@
-# ============================================================
-# Dependencies
-# ============================================================
-
 import asyncio
 import json
 import logging
@@ -25,7 +21,6 @@ logger = logging.getLogger("document-search-client")
 # Disable Groq and httpx loggers
 logging.getLogger("groq").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
-
 
 # ============================================================
 # Environment Variables
@@ -54,6 +49,9 @@ class MCPClient:
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
         self.debug = debug
+        
+        # Permission control setting
+        self.require_permission = True  # Default to requiring permission
         
         # ============================================================
         # Message history tracking
@@ -87,6 +85,24 @@ class MCPClient:
         self.available_resources = []
         self.available_prompts = []
         self.server_name = None
+
+    def ask_permission(self, action_description: str) -> bool:
+        """Ask user for permission before performing an action.
+        
+        Args:
+            action_description: Description of the action to be performed
+            
+        Returns:
+            bool: True if permission granted, False otherwise
+        """
+        while True:
+            response = input(f"The system wants to {action_description}. Do you allow this? (yes/no): ").strip().lower()
+            if response in ['yes', 'y']:
+                return True
+            elif response in ['no', 'n']:
+                return False
+            else:
+                print("Please answer yes or no.")
 
     # ============================================================
     # Connect to MCP Server
@@ -215,7 +231,8 @@ class MCPClient:
         Returns:
             The content of the resource as a string
         """
-            
+        # Permission check is now handled in the chat_loop method
+        
         if self.debug:
             logger.info(f"Reading resource: {uri}")
             
@@ -270,6 +287,10 @@ class MCPClient:
         Returns:
             The prompt result
         """
+        if not self.ask_permission(f"get prompt '{name}' with arguments {arguments}"):
+            error_msg = "Permission denied to get prompt"
+            print(error_msg)
+            raise ValueError(error_msg)
             
         if self.debug:
             logger.info(f"Getting prompt: {name} with arguments: {arguments}")
@@ -282,6 +303,39 @@ class MCPClient:
             error_msg = f"Error getting prompt {name}: {str(e)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
+
+    # ============================================================
+    # Permission Request Helper
+    # ============================================================
+    async def request_permission(self, tool_name: str, tool_args: dict) -> bool:
+        """Request permission from the user before executing a tool.
+        
+        Args:
+            tool_name: The name of the tool to execute
+            tool_args: The arguments to pass to the tool
+            
+        Returns:
+            True if the user grants permission, False otherwise
+        """
+        # Skip permission check if requirements are disabled
+        if not self.require_permission:
+            return True
+            
+        # Format the args for display
+        args_str = json.dumps(tool_args, indent=2)
+        
+        # Ask for permission
+        print(f"\n{'='*60}")
+        print(f"PERMISSION REQUEST: Execute tool '{tool_name}'?")
+        print(f"Arguments:")
+        print(f"{args_str}")
+        print(f"{'='*60}")
+        
+        # Get user response
+        response = input("Allow this operation? (y/n): ").strip().lower()
+        
+        # Return True if the user confirms, False otherwise
+        return response in ('y', 'yes')
 
     # ============================================================
     # Process a Query using Groq and Available Tools
@@ -467,8 +521,25 @@ class MCPClient:
                         tool_args = {}
                 
                 if self.debug:
-                    logger.info(f"Executing tool: {tool_name}")
+                    logger.info(f"Requesting permission to execute tool: {tool_name}")
                     logger.info(f"Arguments: {tool_args}")
+                
+                # Request permission from the user
+                permission_granted = await self.request_permission(tool_name, tool_args)
+                
+                if not permission_granted:
+                    # User denied permission
+                    permission_denied_msg = f"Permission denied to execute tool: {tool_name}"
+                    logger.info(permission_denied_msg)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": permission_denied_msg
+                    })
+                    await self.add_to_history("tool", permission_denied_msg, 
+                                            {"tool": tool_name, "permission": "denied", "tool_call_id": tool_call.id})
+                    final_text.append(f"\n[Permission denied for tool {tool_name}]")
+                    continue
                 
                 # Execute tool call on the server
                 try:
@@ -532,6 +603,7 @@ class MCPClient:
         print(f"{'='*50}")
         print("Type your queries or use these commands:")
         print("  /debug - Toggle debug mode")
+        print("  /permissions - Toggle permission requirements")
         print("  /refresh - Refresh server capabilities")
         print("  /resources - List available resources")
         print("  /resource <uri> - Read a specific resource")
@@ -556,6 +628,12 @@ class MCPClient:
                     self.debug = not self.debug
                     print(f"\nDebug mode {'enabled' if self.debug else 'disabled'}")
                     continue
+                    
+                # Toggle permission requirements
+                elif query.lower() == '/permissions':
+                    self.require_permission = not self.require_permission
+                    print(f"\nPermission requirements {'enabled' if self.require_permission else 'disabled'}")
+                    continue
 
                 # Refresh server capabilities
                 elif query.lower() == '/refresh':
@@ -576,6 +654,15 @@ class MCPClient:
                 # Read content from a resource
                 elif query.lower().startswith('/resource '):
                     uri = query[10:].strip()
+                    print(f"\nResource requested: {uri}")
+                    
+                    # Request permission if needed
+                    if self.require_permission:
+                        permission = input(f"Do you want to read resource '{uri}'? (y/n): ").strip().lower()
+                        if permission not in ('y', 'yes'):
+                            print("Operation cancelled by user")
+                            continue
+                            
                     print(f"\nFetching resource: {uri}")
                     content = await self.read_resource(uri)
                     print(f"\nResource Content ({uri}):")
@@ -629,6 +716,15 @@ class MCPClient:
                         else:
                             # Default to using "text" as the argument name if no prompt info available
                             arguments["text"] = arg_text
+                    
+                    # Request permission if needed
+                    if self.require_permission:
+                        print(f"\nPrompt requested: {name}")
+                        print(f"Arguments: {json.dumps(arguments, indent=2)}")
+                        permission = input("Do you want to execute this prompt? (y/n): ").strip().lower()
+                        if permission not in ('y', 'yes'):
+                            print("Operation cancelled by user")
+                            continue
                     
                     print(f"\nGetting prompt template: {name}")
                     prompt_result = await self.get_prompt(name, arguments)
