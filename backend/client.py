@@ -340,11 +340,12 @@ class MCPClient:
     # ============================================================
     # Process a Query using Groq and Available Tools
     # ============================================================
-    async def process_query(self, query: str) -> str:
+    async def process_query(self, query: str, max_tool_calls: int = 5) -> str:
         """Process a query using Groq and available tools
         
         Args:
             query: The query to process
+            max_tool_calls: Maximum number of tool call iterations allowed
             
         Returns:
             The response from the AI after processing the query
@@ -353,161 +354,90 @@ class MCPClient:
         # Add user query to history
         await self.add_to_history("user", query)
         
-        # Convert message history to Groq format
-        messages = []
+        # Initialize tool call counter
+        tool_call_count = 0
         
-        # Always include the current system prompt first
-        messages.append({
-            "role": "system",
-            "content": self.system_prompt
-        })
-        
-        # We need to properly maintain the tool call sequence
-        # This means ensuring every 'tool' message follows an 'assistant' message with tool_calls
-        assistant_with_tool_calls = None
-        pending_tool_responses = []
-        
-        # Track message indices to help with debugging
-        for i, msg in enumerate(self.message_history):
-            # Handle different message types
-            if msg['role'] == 'user':
-                # First flush any pending tool responses if needed
-                if assistant_with_tool_calls and pending_tool_responses:
-                    messages.append(assistant_with_tool_calls)
-                    messages.extend(pending_tool_responses)
-                    assistant_with_tool_calls = None
-                    pending_tool_responses = []
-                
-                # Then add the user message
-                messages.append({
-                    "role": "user",
-                    "content": msg['content']
-                })
-            
-            elif msg['role'] == 'assistant':
-                # Check if this is an assistant message with tool calls
-                metadata = msg.get('metadata', {})
-                if metadata.get('has_tool_calls', False):
-                    # If we already have a pending assistant with tool calls, flush it
-                    if assistant_with_tool_calls:
-                        messages.append(assistant_with_tool_calls)
-                        messages.extend(pending_tool_responses)
-                        pending_tool_responses = []
-                    
-                    # Store this assistant message for later (until we collect all tool responses)
-                    assistant_with_tool_calls = {
-                        "role": "assistant",
-                        "content": msg['content'],
-                        "tool_calls": metadata.get('tool_calls', [])
-                    }
-                else:
-                    # Regular assistant message without tool calls
-                    # First flush any pending tool calls
-                    if assistant_with_tool_calls:
-                        messages.append(assistant_with_tool_calls)
-                        messages.extend(pending_tool_responses)
-                        assistant_with_tool_calls = None
-                        pending_tool_responses = []
-                    
-                    # Then add the regular assistant message
-                    messages.append({
-                        "role": "assistant",
-                        "content": msg['content']
-                    })
-            
-            elif msg['role'] == 'tool' and 'tool_call_id' in msg.get('metadata', {}):
-                # Collect tool responses
-                if assistant_with_tool_calls:  # Only add if we have a preceding assistant message with tool calls
-                    pending_tool_responses.append({
-                        "role": "tool",
-                        "tool_call_id": msg['metadata']['tool_call_id'],
-                        "content": msg['content']
-                    })
-            
-            elif msg['role'] == 'system':
-                # System messages can be added directly
-                messages.append({
-                    "role": "system",
-                    "content": msg['content']
-                })
-        
-        # Flush any remaining pending tool calls at the end
-        if assistant_with_tool_calls:
-            messages.append(assistant_with_tool_calls)
-            messages.extend(pending_tool_responses)
-        
-        if self.debug:
-            logger.info(f"Prepared {len(messages)} messages for Groq")
-            for i, msg in enumerate(messages):
-                role = msg['role']
-                has_tool_calls = 'tool_calls' in msg
-                preview = msg['content'][:50] + "..." if msg['content'] else ""
-                logger.info(f"Message {i}: {role} {'with tool_calls' if has_tool_calls else ''} - {preview}")
-        
-        # Make sure we have the latest tools
-        if not self.available_tools:
-            await self.refresh_capabilities()
-
-        # Format tools for Groq
-        available_tools = [{ 
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.inputSchema
-            }
-        } for tool in self.available_tools]
-
-        if self.debug:
-            tool_names = [tool["function"]["name"] for tool in available_tools]
-            logger.info(f"Available tools for query: {tool_names}")
-            logger.info(f"Sending {len(messages)} messages to Groq")
-
-        # Initial Groq API call
-        try:
-            response = self.groq.chat.completions.create(
-                model="llama3-70b-8192",  # Groq's most capable model
-                messages=messages,
-                tools=available_tools,
-                tool_choice="auto"
-            )
-        except Exception as e:
-            error_msg = f"Error calling Groq API: {str(e)}"
-            logger.error(error_msg)
-            await self.add_to_history("assistant", error_msg, {"error": True})
-            return error_msg
-
-        # Process response and handle tool calls
-        tool_results = []
+        # Initialize response collection
         final_text = []
         
-        assistant_message = response.choices[0].message
-        initial_response = assistant_message.content or ""
-        
-        # Add initial assistant response to history with metadata about tool calls
-        tool_calls_metadata = {}
-        if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls:
-            tool_calls_metadata = {
-                "has_tool_calls": True,
-                "tool_calls": assistant_message.tool_calls
+        # Start the conversation with the user query
+        messages = [
+            {
+                "role": "system",
+                "content": self.system_prompt
+            },
+            {
+                "role": "user",
+                "content": query
             }
+        ]
         
-        await self.add_to_history("assistant", initial_response, tool_calls_metadata)
-        final_text.append(initial_response)
-        
-        # Check if tool calls are present
-        if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls:
+        # Begin the tool loop
+        while tool_call_count < max_tool_calls:
             if self.debug:
-                logger.info(f"Tool calls requested: {len(assistant_message.tool_calls)}")
+                logger.info(f"Tool call iteration {tool_call_count + 1}/{max_tool_calls}")
             
-            # Add the assistant's message to the conversation
+            # Make sure we have the latest tools
+            if not self.available_tools:
+                await self.refresh_capabilities()
+
+            # Format tools for Groq
+            available_tools = [{ 
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.inputSchema
+                }
+            } for tool in self.available_tools]
+
+            # Call Groq API
+            try:
+                response = self.groq.chat.completions.create(
+                    model="llama3-70b-8192",  # Groq's most capable model
+                    messages=messages,
+                    tools=available_tools,
+                    tool_choice="auto"
+                )
+            except Exception as e:
+                error_msg = f"Error calling Groq API: {str(e)}"
+                logger.error(error_msg)
+                await self.add_to_history("assistant", error_msg, {"error": True})
+                return error_msg
+
+            # Get the assistant message
+            assistant_message = response.choices[0].message
+            response_content = assistant_message.content or ""
+            
+            # Add assistant's response to history and final output
+            tool_calls_metadata = {}
+            if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls:
+                tool_calls_metadata = {
+                    "has_tool_calls": True,
+                    "tool_calls": assistant_message.tool_calls
+                }
+            
+            await self.add_to_history("assistant", response_content, tool_calls_metadata)
+            
+            # Add assistant's response to final text if not empty
+            if response_content:
+                final_text.append(response_content)
+            
+            # Check if we have any tool calls
+            if not hasattr(assistant_message, 'tool_calls') or not assistant_message.tool_calls:
+                # No tool calls, we're done
+                break
+                
+            # Add the assistant's message to conversation history
             messages.append({
                 "role": "assistant",
                 "content": assistant_message.content,
                 "tool_calls": assistant_message.tool_calls
             })
             
-            # Process each tool call
+            # Process tool calls
+            any_tools_executed = False
+            
             for tool_call in assistant_message.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = tool_call.function.arguments
@@ -519,10 +449,6 @@ class MCPClient:
                     except json.JSONDecodeError:
                         logger.warning(f"Failed to parse tool arguments as JSON: {tool_args}")
                         tool_args = {}
-                
-                if self.debug:
-                    logger.info(f"Requesting permission to execute tool: {tool_name}")
-                    logger.info(f"Arguments: {tool_args}")
                 
                 # Request permission from the user
                 permission_granted = await self.request_permission(tool_name, tool_args)
@@ -545,21 +471,20 @@ class MCPClient:
                 try:
                     result = await self.session.call_tool(tool_name, tool_args)
                     tool_content = result.content if hasattr(result, 'content') else str(result)
-                    tool_results.append({"call": tool_name, "result": tool_content[0].text})
                     final_text.append(f"\n[Calling tool {tool_name} with args {tool_args}]")
                     
-                    if self.debug:
-                        result_preview = tool_content[0].text[:200] + "..." if len(tool_content[0].text) > 200 else tool_content[0].text
-                        logger.info(f"Tool result preview: {result_preview}")
-                    
                     # Add the tool result to the conversation
+                    tool_result_content = tool_content[0].text if hasattr(tool_content[0], 'text') else str(tool_content[0])
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": tool_content[0].text
+                        "content": tool_result_content
                     })
-                    await self.add_to_history("tool", tool_content[0].text, {"tool": tool_name, "args": tool_args, "tool_call_id": tool_call.id})
-                
+                    await self.add_to_history("tool", tool_result_content, 
+                                             {"tool": tool_name, "args": tool_args, "tool_call_id": tool_call.id})
+                    
+                    any_tools_executed = True
+                    
                 except Exception as e:
                     error_msg = f"Error executing tool {tool_name}: {str(e)}"
                     logger.error(error_msg)
@@ -568,25 +493,44 @@ class MCPClient:
                         "tool_call_id": tool_call.id,
                         "content": error_msg
                     })
-                    await self.add_to_history("tool", error_msg, {"tool": tool_name, "error": True, "tool_call_id": tool_call.id})
+                    await self.add_to_history("tool", error_msg, 
+                                             {"tool": tool_name, "error": True, "tool_call_id": tool_call.id})
                     final_text.append(f"\n[Error executing tool {tool_name}: {str(e)}]")
             
-            if self.debug:
-                logger.info("Getting final response from Groq with tool results")
-            
-            # Get a new response from Groq with the tool results
+            # Increment the tool call counter if any tools were executed
+            if any_tools_executed:
+                tool_call_count += 1
+                
+                if tool_call_count >= max_tool_calls:
+                    # Add a note that we've reached the maximum number of tool calls
+                    max_tool_calls_msg = f"\n[Reached maximum of {max_tool_calls} tool call iterations]"
+                    final_text.append(max_tool_calls_msg)
+                    if self.debug:
+                        logger.info(max_tool_calls_msg)
+            else:
+                # No tools were executed (all denied permission), so we're done
+                break
+        
+        # Get final summary response if we executed tools
+        if tool_call_count > 0:
             try:
-                second_response = self.groq.chat.completions.create(
+                # Add a system message encouraging a final summary
+                messages.append({
+                    "role": "system",
+                    "content": "Please provide a final summary of all the information gathered."
+                })
+                
+                final_response = self.groq.chat.completions.create(
                     model="llama3-70b-8192",
                     messages=messages
                 )
                 
-                response_content = second_response.choices[0].message.content or ""
-                await self.add_to_history("assistant", response_content)
-                final_text.append("\n" + response_content)
-
+                summary_content = final_response.choices[0].message.content
+                await self.add_to_history("assistant", summary_content)
+                final_text.append("\n\n### Final Summary ###\n" + summary_content)
+                
             except Exception as e:
-                error_msg = f"Error getting final response from Groq: {str(e)}"
+                error_msg = f"Error getting final summary: {str(e)}"
                 logger.error(error_msg)
                 await self.add_to_history("assistant", error_msg, {"error": True})
                 final_text.append(f"\n[Error: {error_msg}]")
@@ -604,6 +548,7 @@ class MCPClient:
         print("Type your queries or use these commands:")
         print("  /debug - Toggle debug mode")
         print("  /permissions - Toggle permission requirements")
+        print("  /max_tools <number> - Set maximum tool call iterations (default: 5)")
         print("  /refresh - Refresh server capabilities")
         print("  /resources - List available resources")
         print("  /resource <uri> - Read a specific resource")
@@ -612,6 +557,9 @@ class MCPClient:
         print("  /tools - List available tools")
         print("  /quit - Exit the client")
         print(f"{'='*50}")
+        
+        # Set default max tool calls
+        max_tool_calls = 5
         
         # Main chat loop
         while True:
@@ -633,6 +581,18 @@ class MCPClient:
                 elif query.lower() == '/permissions':
                     self.require_permission = not self.require_permission
                     print(f"\nPermission requirements {'enabled' if self.require_permission else 'disabled'}")
+                    continue
+                    
+                # Set maximum tool call iterations
+                elif query.lower().startswith('/max_tools '):
+                    try:
+                        max_tool_calls = int(query[10:].strip())
+                        if max_tool_calls < 1:
+                            print("Maximum tool calls must be at least 1")
+                            max_tool_calls = 1
+                        print(f"\nMaximum tool call iterations set to: {max_tool_calls}")
+                    except ValueError:
+                        print("Invalid number. Usage: /max_tools <number>")
                     continue
 
                 # Refresh server capabilities
@@ -689,7 +649,6 @@ class MCPClient:
 
                 # Run a specific prompt with arguments
                 elif query.lower().startswith('/prompt '):
-                    
                     # Parse: /prompt name sentence of arguments
                     parts = query[8:].strip().split(maxsplit=1)
                     if not parts:
@@ -793,9 +752,9 @@ class MCPClient:
                             print(f"    {tool.description}")
                     continue
                     
-                # Process regular queries
+                # Process regular queries with the specified max_tool_calls
                 print("\nProcessing query...")
-                response = await self.process_query(query)
+                response = await self.process_query(query, max_tool_calls)
                 print("\n" + response)
                     
             except Exception as e:
