@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
-import Link from 'next/link'; // Import Link
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FiSend, FiUser, FiMessageSquare, FiInbox, FiSettings, FiLogOut, FiMenu, FiX, FiChevronRight } from 'react-icons/fi';
+import { FiSend, FiUser, FiMessageSquare, FiInbox, FiSettings, FiLogOut, FiMenu, FiX, FiChevronRight, FiWifi, FiWifiOff } from 'react-icons/fi';
 
 type Message = {
   id: string;
@@ -11,18 +11,23 @@ type Message = {
   timestamp: Date;
 };
 
-// Empty initial messages array - removing the welcome message
 const initialMessages: Message[] = [];
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Sidebar closed by default
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState('');
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const router = useRouter(); // Ensure router is initialized
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const router = useRouter();
   
   // Check auth status on mount
   useEffect(() => {
@@ -35,12 +40,105 @@ export default function Home() {
       setUser(JSON.parse(storedUser));
     }
   }, [router]);
-
+  
+  // Connect to WebSocket
+  useEffect(() => {
+    if (!user) return; // Only connect if user is logged in
+    
+    // Create WebSocket connection
+    const connectWebSocket = () => {
+      setConnectionError('');
+      
+      // Use secure connection in production
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.hostname}:8000/ws`;
+      
+      try {
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+        
+        ws.onopen = () => {
+          console.log('WebSocket connected');
+          setIsConnected(true);
+          setConnectionError('');
+          
+          // Clear any reconnection timeouts
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
+        };
+        
+        ws.onmessage = (event) => {
+          console.log('Message received:', event.data);
+          
+          // Add bot message
+          const botMessage: Message = {
+            id: Date.now().toString(),
+            content: event.data,
+            sender: 'bot',
+            timestamp: new Date(),
+          };
+          
+          setMessages(prev => [...prev, botMessage]);
+          setIsProcessing(false);
+        };
+        
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          setConnectionError('Connection error. Trying to reconnect...');
+          setIsConnected(false);
+        };
+        
+        ws.onclose = (event) => {
+          console.log('WebSocket closed:', event.code, event.reason);
+          setIsConnected(false);
+          
+          // Attempt to reconnect after 3 seconds
+          if (!reconnectTimeoutRef.current) {
+            setConnectionError('Connection lost. Reconnecting...');
+            reconnectTimeoutRef.current = setTimeout(() => {
+              reconnectTimeoutRef.current = null;
+              connectWebSocket();
+            }, 3000);
+          }
+        };
+      } catch (error) {
+        console.error('WebSocket connection error:', error);
+        setConnectionError('Failed to connect. Retrying...');
+        setIsConnected(false);
+        
+        // Attempt to reconnect after 3 seconds
+        if (!reconnectTimeoutRef.current) {
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectTimeoutRef.current = null;
+            connectWebSocket();
+          }, 3000);
+        }
+      }
+    };
+    
+    connectWebSocket();
+    
+    // Cleanup on unmount
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    };
+  }, [user]);
+  
   // Scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
+  
   // Focus input when sidebar closes
   useEffect(() => {
     if (!isSidebarOpen) {
@@ -49,11 +147,11 @@ export default function Home() {
       }, 300);
     }
   }, [isSidebarOpen]);
-
+  
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!input.trim() || isProcessing) return;
+    if (!input.trim() || isProcessing || !isConnected) return;
     
     // Add user message
     const userMessage: Message = {
@@ -68,47 +166,19 @@ export default function Home() {
     setIsProcessing(true);
     
     try {
-      // Process the user's message
-      // In a real implementation, this would call an API for processing
-      setTimeout(() => {
-        const botResponses: Record<string, string> = {
-          'hello': 'Hello! How can I assist you with your emails today?',
-          'hi': 'Hi there! Need any help managing your inbox?',
-          'help': 'I can help you summarize emails, draft responses, organize your inbox, and more. Just let me know what you need!',
-          'summarize': 'I can summarize your emails. Which email would you like me to summarize?',
-          'draft': 'I can help draft an email. What would you like to say and to whom?',
-          'organize': 'I can help organize your inbox. Would you like me to suggest tags or create filters?',
-        };
-        
-        // Check for keyword matches or generate a fallback response
-        let botContent = 'I\'m still learning how to respond to that. Is there something specific about your emails I can help with?';
-        
-        const userInputLower = input.toLowerCase();
-        for (const [keyword, response] of Object.entries(botResponses)) {
-          if (userInputLower.includes(keyword)) {
-            botContent = response;
-            break;
-          }
-        }
-        
-        const botMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: botContent,
-          sender: 'bot',
-          timestamp: new Date(),
-        };
-        
-        setMessages(prev => [...prev, botMessage]);
-        setIsProcessing(false);
-      }, 1000);
-      
+      // Send message through WebSocket
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(input.trim());
+      } else {
+        throw new Error('WebSocket is not connected');
+      }
     } catch (error) {
-      console.error('Error processing message:', error);
+      console.error('Error sending message:', error);
       
       // Add error message
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: 'Sorry, there was an error processing your request. Please try again.',
+        content: 'Failed to send message. Please check your connection and try again.',
         sender: 'bot',
         timestamp: new Date(),
       };
@@ -117,13 +187,19 @@ export default function Home() {
       setIsProcessing(false);
     }
   };
-
+  
   const handleLogout = () => {
+    // Close WebSocket connection
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    
     localStorage.removeItem('user');
     localStorage.removeItem('authToken');
     router.push('/login');
   };
-
+  
   if (!user) {
     return (
       <div className="flex justify-center items-center min-h-screen bg-dark-bg">
@@ -131,10 +207,18 @@ export default function Home() {
       </div>
     );
   }
-
+  
   return (
     <div className="flex h-screen bg-gradient-to-b from-dark-bg to-black text-white overflow-hidden">
-      {/* Mobile toggle button - positioned outside the sidebar for better visibility */}
+      {/* Connection status indicator */}
+      <div className={`fixed top-4 right-4 z-50 flex items-center ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+        {isConnected ? <FiWifi size={16} /> : <FiWifiOff size={16} />}
+        <span className="ml-2 text-xs font-medium">
+          {isConnected ? 'Connected' : connectionError || 'Disconnected'}
+        </span>
+      </div>
+      
+      {/* Mobile toggle button */}
       <motion.button 
         className="fixed top-4 left-4 z-50 p-3 rounded-full bg-primary/90 hover:bg-primary text-white shadow-lg"
         whileHover={{ scale: 1.05 }}
@@ -185,11 +269,9 @@ export default function Home() {
             </div>
             
             <nav className="space-y-1.5 mb-8">
-              {/* Updated Sidebar Items */}
               <SidebarItem icon={<FiMessageSquare />} text="Chat History" isActive={router.pathname === '/home'} />
-              {/* Wrap Profile item with Link */}
               <Link href="/settings" passHref legacyBehavior>
-                <a onClick={() => setIsSidebarOpen(false)}> {/* Close sidebar on click */}
+                <a onClick={() => setIsSidebarOpen(false)}>
                   <SidebarItem icon={<FiUser />} text="Settings" isActive={router.pathname === '/settings'} />
                 </a>
               </Link>
@@ -199,7 +281,7 @@ export default function Home() {
         )}
       </AnimatePresence>
       
-      {/* Main chat area taking full width */}
+      {/* Main chat area */}
       <div className="flex-1 flex flex-col max-h-screen">
         {/* Messages container */}
         <div 
@@ -210,8 +292,6 @@ export default function Home() {
             backgroundPosition: "center" 
           }}
         >
-          {/* Removing the welcome section with branding */}
-          
           {messages.map((message, index) => (
             <div 
               key={message.id} 
@@ -287,23 +367,29 @@ export default function Home() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Type a message..."
+                placeholder={isConnected ? "Type a message..." : "Connecting..."}
                 className="w-full bg-black/30 border border-dark-border rounded-full py-3 pl-5 pr-12 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary shadow-inner"
-                disabled={isProcessing}
+                disabled={isProcessing || !isConnected}
               />
               <button
                 type="submit"
                 className={`absolute right-1 top-1 bg-primary hover:bg-primary-dark p-2.5 rounded-full transition-colors ${
-                  isProcessing || !input.trim() ? 'opacity-50 cursor-not-allowed' : 'shadow-md'
+                  isProcessing || !input.trim() || !isConnected ? 'opacity-50 cursor-not-allowed' : 'shadow-md'
                 }`}
-                disabled={isProcessing || !input.trim()}
+                disabled={isProcessing || !input.trim() || !isConnected}
               >
                 <FiSend size={18} />
               </button>
             </div>
-            <div className="mt-2 text-xs text-center text-gray-500">
-              Try saying: "Summarize my recent emails" or "Draft an email to my team"
-            </div>
+            {isConnected ? (
+              <div className="mt-2 text-xs text-center text-gray-500">
+                Try: "Summarize my recent emails" or "/tools" to see available commands
+              </div>
+            ) : (
+              <div className="mt-2 text-xs text-center text-red-500">
+                {connectionError || "Trying to connect to server..."}
+              </div>
+            )}
           </form>
         </div>
       </div>
@@ -311,17 +397,16 @@ export default function Home() {
   );
 }
 
-// Update SidebarItemProps to include optional onClick
+// SidebarItemProps definition
 type SidebarItemProps = {
   icon: React.ReactNode;
   text: string;
   isActive: boolean;
-  onClick?: () => void; // onClick remains optional
+  onClick?: () => void;
 };
 
-// Update SidebarItem component to handle onClick
+// SidebarItem component
 const SidebarItem: React.FC<SidebarItemProps> = ({ icon, text, isActive, onClick }) => {
-  // The component itself doesn't need Link, the parent wraps it
   return (
     <div 
       className={`flex items-center p-2.5 rounded-lg cursor-pointer transition-all ${
@@ -329,7 +414,7 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon, text, isActive, onClick
           ? 'bg-primary text-white shadow-md' 
           : 'text-gray-400 hover:bg-dark-bg hover:text-white'
       }`}
-      onClick={onClick} // Use onClick for actions like logout
+      onClick={onClick}
     >
       <span className="mr-3">{icon}</span>
       <span>{text}</span>

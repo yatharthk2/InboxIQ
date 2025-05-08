@@ -778,24 +778,10 @@ class MCPClient:
 async def main():
     """Run the MCP client"""
 
-    # Check for server script path
-    if len(sys.argv) < 2:
-        print("Usage: python client.py <path_to_server_script>")
-        sys.exit(1)
-        
-    # Email server configuration
-    email_server_config = {
-        "email_server": {
-            "command": "python",
-            "args": ["C:/Users/yatha/Desktop/open-notif/InboxIQ/backend/server.py"]
-        }
-    }
-    
-    # Log the email server configuration
-    logger.info(f"Email server configuration: {email_server_config}")
+    # Use hardcoded server path instead of command-line arguments
+    server_script = "C:\\Users\\yatha\\Desktop\\open-notif\\InboxIQ\\backend\\server.py"
     
     # Initialize client
-    server_script = sys.argv[1]
     client = MCPClient()
     
     # Connect to server
