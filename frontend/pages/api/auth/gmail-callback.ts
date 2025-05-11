@@ -1,20 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerConfig } from '../../../utils/serverConfig';
+import { getServerConfig, isGoogleOAuthConfigured } from '../../../utils/serverConfig';
 import { saveGmailAccount } from '../../../utils/db';
-
-// Get Google OAuth configuration
-const {
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  OAUTH_REDIRECT_URI
-} = getServerConfig();
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
   // This endpoint receives the OAuth callback from Google
-  const { code, state } = req.query;
+  const { code, state, error } = req.query;
+
+  // Handle OAuth error returned from Google
+  if (error) {
+    console.error('Google OAuth error:', error);
+    return renderErrorPage(res, `Google authorization error: ${error}`);
+  }
 
   if (!code || !state) {
     return res.status(400).json({ 
@@ -23,7 +22,19 @@ export default async function handler(
     });
   }
 
+  // Validate that Google OAuth is configured properly
+  if (!isGoogleOAuthConfigured()) {
+    return renderErrorPage(res, 'Google OAuth is not properly configured on the server');
+  }
+
   try {
+    // Get Google OAuth configuration
+    const {
+      GOOGLE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET,
+      OAUTH_REDIRECT_URI
+    } = getServerConfig();
+
     // Parse the state parameter to get the user ID
     const { userId } = JSON.parse(state as string);
 
@@ -141,67 +152,80 @@ export default async function handler(
       ? error.message 
       : 'An unknown error occurred';
     
-    // Return an error page
-    return res.status(500).send(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Connection Failed</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              background-color: #121212;
-              color: white;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              height: 100vh;
-              margin: 0;
-              text-align: center;
-            }
-            .error-icon {
-              width: 60px;
-              height: 60px;
-              background-color: #f44336;
-              border-radius: 50%;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              margin-bottom: 20px;
-            }
-            h1 {
-              margin-bottom: 10px;
-            }
-            p {
-              color: #aaa;
-              margin-bottom: 20px;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="error-icon">
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </div>
-          <h1>Connection Failed</h1>
-          <p>There was an error connecting your Gmail account. Please try again.</p>
-          <script>
-            // Notify the parent window that the connection failed
-            window.opener.postMessage({
-              type: 'GMAIL_CONNECTION_FAILED',
-              error: '${errorMessage.replace(/'/g, "\\'")}'
-            }, '*');
-            
-            // Close the popup after a short delay
-            setTimeout(() => {
-              window.close();
-            }, 3000);
-          </script>
-        </body>
-      </html>
-    `);
+    return renderErrorPage(res, errorMessage);
   }
+}
+
+// Helper function to render error page
+function renderErrorPage(res: NextApiResponse, errorMessage: string) {
+  return res.status(500).send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Connection Failed</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            background-color: #121212;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+          }
+          .error-icon {
+            width: 60px;
+            height: 60px;
+            background-color: #f44336;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+          }
+          h1 {
+            margin-bottom: 10px;
+          }
+          p {
+            color: #aaa;
+            margin-bottom: 20px;
+          }
+          .error-details {
+            max-width: 80%;
+            word-break: break-word;
+            margin-top: 20px;
+            padding: 10px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-icon">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
+        <h1>Connection Failed</h1>
+        <p>There was an error connecting your Gmail account. Please try again.</p>
+        <div class="error-details">${errorMessage.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+        <script>
+          // Notify the parent window that the connection failed
+          window.opener.postMessage({
+            type: 'GMAIL_CONNECTION_FAILED',
+            error: '${errorMessage.replace(/'/g, "\\'")}'
+          }, '*');
+          
+          // Close the popup after a short delay
+          setTimeout(() => {
+            window.close();
+          }, 5000);
+        </script>
+      </body>
+    </html>
+  `);
 }

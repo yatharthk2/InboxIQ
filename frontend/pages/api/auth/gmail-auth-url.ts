@@ -1,12 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerConfig } from '../../../utils/serverConfig';
-
-// Get Google OAuth configuration
-const {
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  OAUTH_REDIRECT_URI
-} = getServerConfig();
+import { getServerConfig, isGoogleOAuthConfigured } from '../../../utils/serverConfig';
 
 export default async function handler(
   req: NextApiRequest,
@@ -18,11 +11,26 @@ export default async function handler(
   }
 
   try {
+    // Validate that Google OAuth is configured properly
+    if (!isGoogleOAuthConfigured()) {
+      return res.status(500).json({
+        message: 'Google OAuth is not properly configured on the server',
+        error: 'OAUTH_CONFIG_MISSING'
+      });
+    }
+
     const { userId } = req.body;
 
     if (!userId) {
       return res.status(400).json({ message: 'User ID is required' });
     }
+
+    // Get Google OAuth configuration
+    const {
+      GOOGLE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET,
+      OAUTH_REDIRECT_URI
+    } = getServerConfig();
 
     // Define the OAuth2 scopes needed
     const scopes = [
@@ -32,12 +40,16 @@ export default async function handler(
       'https://www.googleapis.com/auth/gmail.labels'
     ];
 
-    // Create the authentication URL
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(
-      OAUTH_REDIRECT_URI
-    )}&response_type=code&access_type=offline&prompt=consent&scope=${encodeURIComponent(
-      scopes.join(' ')
-    )}&state=${encodeURIComponent(JSON.stringify({ userId }))}`;
+    // Create the authentication URL with explicit client_id parameter
+    const authUrl =
+      `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}` +
+      `&redirect_uri=${encodeURIComponent(OAUTH_REDIRECT_URI)}` +
+      `&response_type=code` +
+      `&access_type=offline` +
+      `&prompt=consent` +
+      `&scope=${encodeURIComponent(scopes.join(' '))}` +
+      `&state=${encodeURIComponent(JSON.stringify({ userId }))}`;
 
     // Return the authentication URL to the client
     return res.status(200).json({ authUrl });
