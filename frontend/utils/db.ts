@@ -107,9 +107,24 @@ export async function getUserGmailAccounts(userId: string) {
     
     const numericUserId = userResult.rows[0].id;
     
-    // Get all Gmail accounts for the user
+    // Get all Gmail accounts for the user and their associated tag
     const result = await query(
-      'SELECT id, email_address, provider_type, last_sync FROM email_accounts WHERE user_id = $1 ORDER BY id',
+      `SELECT 
+         ea.id, 
+         ea.email_address, 
+         ea.provider_type, 
+         ea.last_sync,
+         COALESCE(
+           (SELECT json_build_object('id', et.id, 'name', et.name, 'color', et.color, 'priority', et.priority)
+            FROM email_tags et
+            JOIN EmailAccountTags eat ON et.id = eat.email_tag_id
+            WHERE eat.email_account_id = ea.id
+            LIMIT 1), -- Ensure only one tag is fetched
+           NULL -- Use NULL if no tag is associated
+         ) as tag -- Changed from 'tags' to 'tag' and expecting a single object or null
+       FROM email_accounts ea
+       WHERE ea.user_id = $1 
+       ORDER BY ea.id`,
       [numericUserId]
     );
     
@@ -432,7 +447,7 @@ export async function getUserTags(userId: string) {
     
     // Get the tags for the user
     const tagsResult = await query(
-      'SELECT id, name, color FROM email_tags WHERE user_id = $1 ORDER BY priority, name',
+      'SELECT id, name, color, priority FROM email_tags WHERE user_id = $1 ORDER BY priority DESC, name',
       [numericUserId]
     );
     
@@ -517,6 +532,91 @@ export async function deleteEmailAccount(userId: string, accountId: number) {
     return true;
   } catch (error) {
     console.error('Error deleting email account:', error);
+    throw error;
+  }
+}
+
+// Helper to get tags associated with an email account
+export async function getEmailAccountAssociatedTags(emailAccountId: number) {
+  try {
+    const result = await query(
+      `SELECT et.id, et.name, et.color, et.priority
+       FROM email_tags et
+       JOIN EmailAccountTags eat ON et.id = eat.email_tag_id
+       WHERE eat.email_account_id = $1
+       ORDER BY et.priority DESC, et.name`,
+      [emailAccountId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error getting email account associated tags:', error);
+    throw error;
+  }
+}
+
+// Helper to add a tag to an email account
+export async function addTagToEmailAccount(emailAccountId: number, tagId: number) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Check if the tagId is already used by another account
+    const existingTagUsage = await client.query(
+      'SELECT email_account_id FROM EmailAccountTags WHERE email_tag_id = $1 AND email_account_id != $2',
+      [tagId, emailAccountId]
+    );
+
+    if (existingTagUsage.rows.length > 0) {
+      throw new Error(`Tag is already assigned to another account (ID: ${existingTagUsage.rows[0].email_account_id}).`);
+    }
+
+    // Remove any existing tag from the current email account
+    await client.query(
+      'DELETE FROM EmailAccountTags WHERE email_account_id = $1',
+      [emailAccountId]
+    );
+
+    // Add the new tag association
+    const insertResult = await client.query(
+      `INSERT INTO EmailAccountTags (email_account_id, email_tag_id)
+       VALUES ($1, $2)
+       RETURNING id, email_account_id, email_tag_id`,
+      [emailAccountId, tagId]
+    );
+
+    if (insertResult.rows.length === 0) {
+      // This should not happen if the previous logic is correct, but as a safeguard
+      throw new Error('Failed to associate tag with account.');
+    }
+
+    // Fetch the tag details to return
+    const tagDetails = await client.query(
+      'SELECT id, name, color, priority FROM email_tags WHERE id = $1',
+      [tagId]
+    );
+    
+    await client.query('COMMIT');
+    return tagDetails.rows[0]; // Return the full tag object
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error adding tag to email account:', error);
+    throw error; // Re-throw the error to be handled by the API layer
+  } finally {
+    client.release();
+  }
+}
+
+// Helper to remove a tag from an email account
+export async function removeTagFromEmailAccount(emailAccountId: number, tagId: number) {
+  try {
+    const result = await query(
+      'DELETE FROM EmailAccountTags WHERE email_account_id = $1 AND email_tag_id = $2 RETURNING id',
+      [emailAccountId, tagId]
+    );
+    return result.rows.length > 0; // Return true if a row was deleted
+  } catch (error) {
+    console.error('Error removing tag from email account:', error);
     throw error;
   }
 }

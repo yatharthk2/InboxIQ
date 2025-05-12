@@ -17,11 +17,19 @@ type LlmIntegration = {
   provider_logo_url: string | null;
 };
 
+type UserTag = {
+  id: number;
+  name: string;
+  color: string;
+  priority: number;
+};
+
 type EmailIntegration = {
   id: number;
   email_address: string;
   provider_type: string;
   last_sync: string | null;
+  tag?: UserTag | null; // Changed from tags: UserTag[] to tag?: UserTag | null
 };
 
 type Provider = {
@@ -81,6 +89,17 @@ export default function Settings() {
   const [isDeletingEmail, setIsDeletingEmail] = useState(false);
   const [emailDeleteError, setEmailDeleteError] = useState('');
 
+  // State for managing tags for email accounts
+  const [userTags, setUserTags] = useState<UserTag[]>([]);
+  const [managingTagsForAccount, setManagingTagsForAccount] = useState<EmailIntegration | null>(null);
+  const [selectedTagToAdd, setSelectedTagToAdd] = useState<string>(''); // Store tag ID as string for select
+  const [isUpdatingAccountTags, setIsUpdatingAccountTags] = useState(false);
+  const [tagManagementError, setTagManagementError] = useState('');
+  // New state for custom tag creation
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#000000');
+
+
   // Handle sidebar navigation clicks
   const handleSectionChange = (sectionId: string) => {
     setActiveSection(sectionId);
@@ -106,6 +125,7 @@ export default function Settings() {
       setUser(parsedUser);
       fetchIntegrations(parsedUser.id, token);
       fetchEmailIntegrations(parsedUser.id, token);
+      fetchUserTags(parsedUser.id, token); // Fetch user tags
     }
   }, [router]);
 
@@ -143,6 +163,25 @@ export default function Settings() {
     }
   };
 
+  const fetchUserTags = async (userId: string, token: string) => {
+    try {
+      // This would be an API call, e.g., GET /api/user-tags?userId=${userId}
+      // For now, let's assume it's fetched and set.
+      // Replace with actual API call:
+      const response = await fetch(`/api/user-tags?userId=${userId}`, { // Assuming this API endpoint exists
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch user tags');
+      }
+      const data = await response.json();
+      setUserTags(data.tags || []);
+    } catch (error) {
+      console.error('Error fetching user tags:', error);
+      // Handle error appropriately
+    }
+  };
+
   const fetchEmailIntegrations = async (userId: string, token: string) => {
     try {
       setIsEmailLoading(true);
@@ -157,6 +196,9 @@ export default function Settings() {
       }
       
       const data = await response.json();
+      // The backend for /api/email/integrations should now return 'tags' array for each integration.
+      // Example structure for each item in data.integrations:
+      // { id: 1, email_address: "...", ..., tags: [{id: 1, name: "Important", color: "#ff0000", priority: 1}] }
       setEmailIntegrations(data.integrations || []);
     } catch (error) {
       console.error('Error fetching email integrations:', error);
@@ -303,6 +345,175 @@ export default function Settings() {
       setIsDeletingEmail(false);
     }
   };
+
+  // Tag Management Modal Handlers
+  const openManageTagsModal = (account: EmailIntegration) => {
+    setManagingTagsForAccount(account);
+    setSelectedTagToAdd('');
+    setTagManagementError('');
+  };
+
+  const closeManageTagsModal = () => {
+    setManagingTagsForAccount(null);
+    setNewTagName('');
+    setNewTagColor('#000000');
+    setTagManagementError('');
+  };
+
+  const handleAddTagToAccount = async (tagIdToAdd?: number) => {
+    if (!managingTagsForAccount || (!selectedTagToAdd && !tagIdToAdd)) return;
+
+    const finalTagId = tagIdToAdd || parseInt(selectedTagToAdd);
+    if (isNaN(finalTagId)) {
+      setTagManagementError('Invalid tag selected.');
+      return;
+    }
+    // Prevent re-assigning the same tag if it's already the current tag
+    if (managingTagsForAccount.tag && managingTagsForAccount.tag.id === finalTagId && !tagIdToAdd) { // !tagIdToAdd ensures this check is for selection, not creation flow
+        setTagManagementError('This tag is already assigned to the account.');
+        return;
+    }
+
+
+    setIsUpdatingAccountTags(true);
+    setTagManagementError('');
+    const token = localStorage.getItem('authToken');
+
+    try {
+      // POST to /api/email/accounts/[accountId]/tags to set/replace the tag
+      const response = await fetch(`/api/email/accounts/${managingTagsForAccount.id}/tags`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ tagId: finalTagId })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to set tag');
+      }
+      
+      if (user && token) {
+        await fetchEmailIntegrations(user.id, token); 
+        // Update managingTagsForAccount with fresh data
+        const updatedEmailIntegrations = await (await fetch(`/api/email/integrations?userId=${user.id}`, { headers: { 'Authorization': `Bearer ${token}` } })).json();
+        const currentAccountData = updatedEmailIntegrations.integrations.find((acc: EmailIntegration) => acc.id === managingTagsForAccount.id);
+        if (currentAccountData) {
+          setManagingTagsForAccount(currentAccountData);
+        } else {
+          // Account might have been deleted in another session, close modal
+          closeManageTagsModal();
+        }
+      }
+      setSelectedTagToAdd('');
+    } catch (error: any) {
+      setTagManagementError(error.message || 'Error setting tag.');
+    } finally {
+      setIsUpdatingAccountTags(false);
+    }
+  };
+
+  const handleCreateAndAddTagToAccount = async () => {
+    if (!managingTagsForAccount || !newTagName.trim()) {
+      setTagManagementError('New tag name cannot be empty.');
+      return;
+    }
+    if (!/^#[0-9A-Fa-f]{6}$/.test(newTagColor)) {
+      setTagManagementError('Invalid color format. Use #RRGGBB.');
+      return;
+    }
+
+    setIsUpdatingAccountTags(true);
+    setTagManagementError('');
+    const token = localStorage.getItem('authToken');
+
+    try {
+      // 1. Create the new tag
+      const createTagResponse = await fetch('/api/tags', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ name: newTagName.trim(), color: newTagColor, priority: 0 }) // Default priority
+      });
+
+      if (!createTagResponse.ok) {
+        const errorData = await createTagResponse.json();
+        throw new Error(errorData.message || 'Failed to create tag');
+      }
+
+      const { tag: newTag } = await createTagResponse.json();
+      if (!newTag || !newTag.id) {
+        throw new Error('Failed to get new tag details after creation.');
+      }
+
+      // 2. Refresh user tags list
+      if (user && token) {
+        await fetchUserTags(user.id, token);
+      }
+
+      // 3. Add the new tag to the account (using its ID)
+      await handleAddTagToAccount(newTag.id); // Re-use existing logic to set/replace
+
+      setNewTagName('');
+      setNewTagColor('#000000');
+      // The success message/UI update for adding to account is handled by handleAddTagToAccount
+
+    } catch (error: any) {
+      setTagManagementError(error.message || 'Error creating and adding tag.');
+    } finally {
+      setIsUpdatingAccountTags(false);
+    }
+  };
+
+
+  const handleRemoveTagFromAccount = async () => { 
+    if (!managingTagsForAccount || !managingTagsForAccount.tag) {
+      setTagManagementError('No tag is currently assigned to this account or account not found.');
+      return;
+    }
+
+    const tagIdToRemove = managingTagsForAccount.tag.id;
+
+    setIsUpdatingAccountTags(true);
+    setTagManagementError('');
+    const token = localStorage.getItem('authToken');
+
+    try {
+      // DELETE to /api/email/accounts/[accountId]/tags/[tagId] to remove the specific tag
+      const response = await fetch(`/api/email/accounts/${managingTagsForAccount.id}/tags/${tagIdToRemove}`, { 
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to remove tag');
+      }
+
+      if (user && token) {
+        await fetchEmailIntegrations(user.id, token);
+         // Update managingTagsForAccount with fresh data
+        const updatedEmailIntegrations = await (await fetch(`/api/email/integrations?userId=${user.id}`, { headers: { 'Authorization': `Bearer ${token}` } })).json();
+        const currentAccountData = updatedEmailIntegrations.integrations.find((acc: EmailIntegration) => acc.id === managingTagsForAccount.id);
+        if (currentAccountData) {
+          setManagingTagsForAccount(currentAccountData);
+        } else {
+          closeManageTagsModal();
+        }
+      }
+    } catch (error: any) {
+      setTagManagementError(error.message || 'Error removing tag.');
+    } finally {
+      setIsUpdatingAccountTags(false);
+    }
+  };
+
 
   const saveIntegration = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -963,6 +1174,7 @@ export default function Settings() {
                           <th className="px-4 py-3">Email Address</th>
                           <th className="px-4 py-3">Provider</th>
                           <th className="px-4 py-3">Last Sync</th>
+                          <th className="px-4 py-3">Tags</th>
                           <th className="px-4 py-3">Actions</th>
                         </tr>
                       </thead>
@@ -988,12 +1200,28 @@ export default function Settings() {
                                 : <span className="text-gray-500">Never</span>}
                             </td>
                             <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-1">
+                                {integration.tag ? (
+                                  <span 
+                                    key={integration.tag.id} 
+                                    className="px-2 py-0.5 text-xs rounded-full"
+                                    style={{ backgroundColor: integration.tag.color, color: '#ffffff' }}
+                                  >
+                                    {integration.tag.name}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-gray-500">No tag</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
                               <div className="flex space-x-2">
                                 <button 
                                   className="text-gray-400 hover:text-white"
-                                  title="Sync now"
+                                  title="Manage Tags"
+                                  onClick={() => openManageTagsModal(integration)}
                                 >
-                                  <FiEdit size={18} />
+                                  <FiEdit size={18} /> {/* Placeholder, consider a tags icon */}
                                 </button>
                                 <button 
                                   className="text-gray-400 hover:text-red-500"
@@ -1061,6 +1289,148 @@ export default function Settings() {
           </div>
         </div>
       </main>
+
+      {/* Manage Tags Modal */}
+      {managingTagsForAccount && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="bg-dark-card rounded-lg shadow-xl p-6 w-full max-w-md"
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Manage Tags for {managingTagsForAccount.email_address}</h3>
+              <button onClick={closeManageTagsModal} className="text-gray-400 hover:text-white">
+                <FiX size={20} />
+              </button>
+            </div>
+
+            {tagManagementError && (
+              <div className="mb-3 p-2 bg-red-500/10 border border-red-500/20 rounded-md text-red-400 text-sm">
+                {tagManagementError}
+              </div>
+            )}
+
+            <div className="mb-4">
+              <h4 className="text-sm font-medium mb-2">Current Tag:</h4>
+              {managingTagsForAccount.tag ? (
+                <div className="flex items-center justify-between p-2 bg-dark-bg rounded-md">
+                    <span 
+                        className="px-2 py-0.5 text-xs rounded-full" 
+                        style={{ backgroundColor: managingTagsForAccount.tag.color, color: '#fff' }}
+                    >
+                      {managingTagsForAccount.tag.name}
+                    </span>
+                    <button 
+                      onClick={() => handleRemoveTagFromAccount()} 
+                      disabled={isUpdatingAccountTags}
+                      className="ml-1.5 text-red-400 hover:text-red-300 disabled:opacity-50"
+                      title="Remove this tag"
+                    >
+                      <FiTrash2 size={14} />
+                    </button>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">No tag assigned to this account.</p>
+              )}
+            </div>
+
+            <div className="mb-4 border-t border-dark-border pt-4">
+              <h4 className="text-sm font-medium mb-2">{managingTagsForAccount.tag ? 'Change Tag To:' : 'Set Tag:'}</h4>
+              <div className="flex items-center gap-2">
+                <select
+                  id="tag-select"
+                  value={selectedTagToAdd}
+                  onChange={(e) => setSelectedTagToAdd(e.target.value)}
+                  className="flex-grow bg-black/30 border border-dark-border rounded py-2 px-3 focus:outline-none focus:ring-1 focus:ring-primary"
+                  disabled={isUpdatingAccountTags}
+                >
+                  <option value="">Select a tag</option>
+                  {userTags
+                    // Filter out the current tag if it's already selected for this account
+                    // Also, filter out tags that are already in use by *other* accounts
+                    .filter(ut => {
+                        const isCurrentlyAssignedToThisAccount = managingTagsForAccount.tag?.id === ut.id;
+                        if (isCurrentlyAssignedToThisAccount) return true; // Allow re-selecting/confirming the current tag
+                        
+                        // Check if this tag 'ut' is used by any email integration at all
+                        const tagInUseByAnyAccount = emailIntegrations.some(ei => ei.tag?.id === ut.id);
+                        return !tagInUseByAnyAccount; // Only show if not used by any account
+                    })
+                    .sort((a, b) => a.name.localeCompare(b.name)) 
+                    .map(tag => (
+                      <option key={tag.id} value={tag.id.toString()}>{tag.name} {managingTagsForAccount.tag?.id === tag.id ? "(Current)" : ""}</option>
+                    ))}
+                </select>
+                <button
+                  onClick={() => handleAddTagToAccount()}
+                  disabled={!selectedTagToAdd || isUpdatingAccountTags || (managingTagsForAccount.tag?.id === parseInt(selectedTagToAdd))}
+                  className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-50 shrink-0"
+                >
+                  {isUpdatingAccountTags && selectedTagToAdd ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (managingTagsForAccount.tag ? 'Change' : 'Set')}
+                </button>
+              </div>
+            </div>
+
+            <div className="mb-4 border-t border-dark-border pt-4">
+              <h4 className="text-sm font-medium mb-2">Create & Set New Tag:</h4>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  placeholder="New Tag Name"
+                  value={newTagName}
+                  onChange={(e) => setNewTagName(e.target.value)}
+                  className="w-full bg-black/30 border border-dark-border rounded py-2 px-3 focus:outline-none focus:ring-1 focus:ring-primary"
+                  disabled={isUpdatingAccountTags}
+                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={newTagColor}
+                    onChange={(e) => setNewTagColor(e.target.value)}
+                    className="h-10 w-10 p-0 border-none rounded bg-black/30 cursor-pointer"
+                    disabled={isUpdatingAccountTags}
+                    title="Select tag color"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Hex Color (e.g. #RRGGBB)"
+                    value={newTagColor}
+                    onChange={(e) => setNewTagColor(e.target.value)}
+                    className="flex-grow bg-black/30 border border-dark-border rounded py-2 px-3 focus:outline-none focus:ring-1 focus:ring-primary"
+                    disabled={isUpdatingAccountTags}
+                  />
+                </div>
+                <button
+                  onClick={handleCreateAndAddTagToAccount}
+                  disabled={!newTagName.trim() || isUpdatingAccountTags}
+                  className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center justify-center"
+                >
+                  {isUpdatingAccountTags && !selectedTagToAdd ? ( // Show spinner if this section is active
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                      Creating & Setting...
+                    </>
+                  ) : 'Create & Set Tag'}
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex justify-end mt-6">
+              <button
+                onClick={closeManageTagsModal}
+                className="px-4 py-2 border border-dark-border rounded-md hover:bg-dark-bg"
+                disabled={isUpdatingAccountTags}
+              >
+                Done
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
