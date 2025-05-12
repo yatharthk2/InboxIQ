@@ -431,8 +431,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
 async def chat_loop(client: MCPClient, websocket: WebSocket):
     """Handle WebSocket conversation loop"""
-    await websocket.send_text(f"Connected to {client.server_name}")
-    await websocket.send_text("Available commands: /debug, /permissions, /max_tools <number>, /refresh, /resources, /resource <uri>, /prompts, /prompt <name> <argument>, /tools, /quit")
+    # await websocket.send_text(f"Connected to {client.server_name}")
+    # await websocket.send_text("Available commands: /debug, /permissions, /max_tools <number>, /refresh, /resources, /resource <uri>, /prompts, /prompt <name> <argument>, /tools, /quit")
     
     max_tool_calls = 5
     
