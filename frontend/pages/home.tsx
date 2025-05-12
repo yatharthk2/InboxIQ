@@ -42,6 +42,7 @@ type SelectedItem = {
   value: string;
   displayText: string;
   color?: string;
+  associatedEmail?: string; // Add this field to store associated email address
 };
 
 const initialMessages: Message[] = [];
@@ -355,7 +356,7 @@ export default function Home() {
   };
   
   // Handle selection of a suggestion
-  const handleSelectSuggestion = (suggestion: CommandSuggestion) => {
+  const handleSelectSuggestion = async (suggestion: CommandSuggestion) => {
     const pattern = commandType === 'email' ? /\/email(\s+.+)?$/ : /\/tags(\s+.+)?$/;
     
     // Replace the command pattern with the selected suggestion
@@ -372,7 +373,11 @@ export default function Home() {
       });
     } else {
       replacementText = `#${suggestion.name}`;
-      // Store selected tag
+      
+      // For tags, extract the numeric ID
+      const tagId = suggestion.id.split('-')[1];
+      
+      // Set initial tag selection while we fetch the associated email
       setSelectedItem({
         type: 'tag',
         id: suggestion.id,
@@ -380,6 +385,34 @@ export default function Home() {
         displayText: suggestion.displayText,
         color: suggestion.color,
       });
+      
+      // Fetch associated email for this tag
+      try {
+        const token = localStorage.getItem('authToken');
+        if (token) {
+          const response = await fetch(`/api/email/account-by-tag?tagId=${tagId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.emailAccount) {
+              // Update the selected item with the associated email
+              setSelectedItem(prev => {
+                if (prev && prev.type === 'tag' && prev.id === suggestion.id) {
+                  return {
+                    ...prev,
+                    associatedEmail: data.emailAccount.email_address
+                  };
+                }
+                return prev;
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching associated email for tag:', error);
+      }
     }
     
     // Replace command with the actual value
@@ -414,9 +447,21 @@ export default function Home() {
     
     let messageToSend = input.trim();
     
-    // Check if an email is selected and format the message
-    if (selectedItem && selectedItem.type === 'email' && user) {
-      messageToSend = `user_id: ${user.id}\nEmail adress : ${selectedItem.value}\ntask : ${input.trim()}`;
+    // Format message based on selected item type (email or tag)
+    if (selectedItem && user) {
+      if (selectedItem.type === 'email') {
+        messageToSend = `user_id: ${user.id}\nEmail address: ${selectedItem.value}\ntask: ${input.trim()}`;
+      } else if (selectedItem.type === 'tag') {
+        // Extract numeric ID from the tag's ID string (e.g., "tag-123" -> "123")
+        const tagId = selectedItem.id.split('-')[1];
+        
+        // Include both tag and associated email if available
+        if (selectedItem.associatedEmail) {
+          messageToSend = `user_id: ${user.id}\nTag id: ${tagId}\nTag name: ${selectedItem.value}\nEmail address: ${selectedItem.associatedEmail}\ntask: ${input.trim()}`;
+        } else {
+          messageToSend = `user_id: ${user.id}\nTag id: ${tagId}\nTag name: ${selectedItem.value}\ntask: ${input.trim()}`;
+        }
+      }
     }
     
     setInput('');
@@ -704,38 +749,192 @@ export default function Home() {
             </div>
             
             {/* Selected item indicator */}
-            {selectedItem && (
-              <div className="mt-2 flex items-center">
-                <div 
-                  className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
-                    selectedItem.type === 'email' 
-                      ? 'bg-blue-400/20 text-blue-400' 
-                      : `bg-opacity-20 text-opacity-90`
-                  }`}
-                  style={selectedItem.type === 'tag' && selectedItem.color ? {
-                    backgroundColor: `${selectedItem.color}20`,
-                    color: selectedItem.color
-                  } : undefined}
+            <AnimatePresence>
+              {selectedItem && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 5, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: "auto" }}
+                  exit={{ opacity: 0, y: 5, height: 0 }}
+                  transition={{ type: "spring", damping: 15 }}
+                  className="mt-2 overflow-hidden"
                 >
-                  {selectedItem.type === 'email' ? (
-                    <FiMail className="mr-1.5" size={12} />
-                  ) : (
-                    <FiTag className="mr-1.5" size={12} />
-                  )}
-                  <span>{selectedItem.displayText}</span>
-                </div>
-                <button
-                  type="button"
-                  className="ml-1.5 text-gray-400 hover:text-gray-300"
-                  onClick={() => {
-                    setSelectedItem(null);
-                    setInput('');
-                  }}
-                >
-                  <FiX size={14} />
-                </button>
-              </div>
-            )}
+                  <motion.div 
+                    className={`rounded-lg p-3 relative ${
+                      selectedItem.type === 'email' 
+                        ? 'bg-gradient-to-r from-blue-600/10 via-blue-500/5 to-indigo-500/10 border border-blue-500/30' 
+                        : 'bg-gradient-to-r from-purple-600/10 via-purple-500/5 to-pink-500/10 border border-purple-500/30'
+                    }`}
+                    whileHover={{ scale: 1.01 }}
+                    initial={{ boxShadow: "0 0 0 rgba(59, 130, 246, 0)" }}
+                    animate={{ 
+                      boxShadow: selectedItem.type === 'email'
+                        ? "0 0 15px rgba(59, 130, 246, 0.15)"
+                        : "0 0 15px rgba(168, 85, 247, 0.15)"
+                    }}
+                    layout
+                  >
+                    {/* Decorative particles */}
+                    {selectedItem.type === 'email' && (
+                      <>
+                        <motion.div 
+                          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-blue-500/20"
+                          animate={{ 
+                            scale: [1, 1.2, 1],
+                            opacity: [0.5, 0.8, 0.5]
+                          }}
+                          transition={{ 
+                            repeat: Infinity, 
+                            duration: 2,
+                            ease: "easeInOut"
+                          }}
+                        />
+                        <motion.div 
+                          className="absolute top-1/2 -right-2 w-3 h-3 rounded-full bg-indigo-500/20"
+                          animate={{ 
+                            scale: [1, 1.3, 1],
+                            opacity: [0.3, 0.6, 0.3]
+                          }}
+                          transition={{ 
+                            repeat: Infinity, 
+                            duration: 2.5,
+                            ease: "easeInOut",
+                            delay: 0.5
+                          }}
+                        />
+                      </>
+                    )}
+                    
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        {selectedItem.type === 'email' ? (
+                          <motion.div 
+                            initial={{ rotate: -10, scale: 0.8 }}
+                            animate={{ 
+                              rotate: [0, -3, 3, 0],
+                              scale: 1,
+                              y: [0, -2, 0]
+                            }}
+                            transition={{
+                              rotate: { 
+                                repeat: Infinity, 
+                                repeatType: "mirror",
+                                duration: 4,
+                                ease: "easeInOut",
+                                times: [0, 0.2, 0.8, 1]
+                              },
+                              y: {
+                                repeat: Infinity,
+                                duration: 2,
+                                ease: "easeInOut"
+                              }
+                            }}
+                            className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 mr-3 shadow-md"
+                          >
+                            <FiMail size={18} />
+                          </motion.div>
+                        ) : (
+                          <motion.div 
+                            initial={{ rotate: -10, scale: 0.8 }}
+                            animate={{ rotate: 0, scale: 1 }}
+                            className="w-8 h-8 rounded-full flex items-center justify-center mr-3"
+                            style={{ 
+                              backgroundColor: `${selectedItem.color}20`, 
+                              color: selectedItem.color 
+                            }}
+                          >
+                            <FiTag size={16} />
+                          </motion.div>
+                        )}
+                        <div>
+                          <div className="flex items-center">
+                            <div className="text-sm font-medium">
+                              {selectedItem.type === 'email' ? 'Email Account' : 'Tag'}
+                            </div>
+                            {selectedItem.type === 'email' && (
+                              <motion.div 
+                                className="ml-2 w-2 h-2 rounded-full bg-green-400"
+                                animate={{ 
+                                  opacity: [1, 0.4, 1],
+                                  scale: [1, 0.8, 1]
+                                }}
+                                transition={{ 
+                                  repeat: Infinity, 
+                                  duration: 2,
+                                  ease: "easeInOut" 
+                                }}
+                              />
+                            )}
+                          </div>
+                          <motion.div 
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.2 }}
+                            className={`text-base font-medium mt-0.5 ${
+                              selectedItem.type === 'email' ? 'text-blue-400' : 'text-purple-400'
+                            }`}
+                          >
+                            {selectedItem.displayText}
+                          </motion.div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end space-y-2">
+                        <motion.button
+                          whileHover={{ scale: 1.1, rotate: 90 }}
+                          whileTap={{ scale: 0.9 }}
+                          transition={{ type: "spring", stiffness: 400, damping: 15 }}
+                          className={`p-1.5 rounded-full ${
+                            selectedItem.type === 'email' 
+                              ? 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20' 
+                              : 'bg-purple-500/10 text-purple-400 hover:bg-purple-500/20'
+                          }`}
+                          onClick={() => {
+                            setSelectedItem(null);
+                            setInput('');
+                          }}
+                          aria-label="Remove selected item"
+                        >
+                          <FiX size={16} />
+                        </motion.button>
+                      </div>
+                    </div>
+                    
+                    {selectedItem.type === 'email' && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        transition={{ delay: 0.3 }}
+                        className="mt-3 text-sm text-gray-300 flex items-center bg-blue-500/5 rounded-md p-2"
+                      >
+                        <motion.div
+                          animate={{ 
+                            x: [0, 3, 0]
+                          }}
+                          transition={{ 
+                            repeat: Infinity, 
+                            repeatType: "mirror", 
+                            duration: 1.5,
+                            ease: "easeInOut" 
+                          }}
+                        >
+                          <FiChevronRight size={14} className="mr-1.5 text-blue-400" />
+                        </motion.div>
+                        <span>Your next message will be processed for this account</span>
+                      </motion.div>
+                    )}
+                    
+                    {/* Connection line to show relationship with input field */}
+                    {selectedItem.type === 'email' && (
+                      <motion.div 
+                        className="absolute -bottom-3 left-1/2 w-0.5 h-3 bg-gradient-to-b from-blue-400/50 to-transparent"
+                        initial={{ scaleY: 0 }}
+                        animate={{ scaleY: 1 }}
+                        transition={{ delay: 0.5 }}
+                      />
+                    )}
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
             
             {isConnected ? (
               <div className="mt-2 text-xs text-center text-gray-500">

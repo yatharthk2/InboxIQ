@@ -620,3 +620,21 @@ export async function removeTagFromEmailAccount(emailAccountId: number, tagId: n
     throw error;
   }
 }
+
+// Helper to get email account associated with a tag
+export async function getEmailAccountByTagId(tagId: number) {
+  try {
+    const result = await query(
+      `SELECT ea.id, ea.email_address, ea.provider_type, ea.last_sync
+       FROM Email_Accounts ea
+       JOIN EmailAccountTags eat ON ea.id = eat.email_account_id
+       WHERE eat.email_tag_id = $1`,
+      [tagId]
+    );
+    
+    return result.rows[0] || null; // Return the first match or null
+  } catch (error) {
+    console.error('Error getting email account by tag ID:', error);
+    throw error;
+  }
+}
