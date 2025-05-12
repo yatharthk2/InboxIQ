@@ -75,12 +75,15 @@ export default async function handler(
     const emailAddress = userInfo.emailAddress;
 
     // Save the Gmail account information to the database
+    // Include client_id and client_secret in the stored token
     await saveGmailAccount(userId, emailAddress, {
       access_token: tokenData.access_token,
       refresh_token: tokenData.refresh_token,
       token_type: tokenData.token_type,
       id_token: tokenData.id_token,
       expiry_date: Date.now() + tokenData.expires_in * 1000,
+      client_id: GOOGLE_CLIENT_ID,      // Add client_id to the token
+      client_secret: GOOGLE_CLIENT_SECRET  // Add client_secret to the token
     });
 
     // Render a success page that will close the popup and notify the parent window
