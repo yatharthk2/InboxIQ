@@ -40,7 +40,7 @@ def authenticate_gmail(user_id=None, email_address=None):
     """Authenticate with Gmail API and return the service object.
     
     Args:
-        user_id: The ID of the user in the database
+        user_id: The UUID of the user in the database (must be a string)
         email_address: The email address to use for this operation
     """
     creds = None
@@ -49,8 +49,18 @@ def authenticate_gmail(user_id=None, email_address=None):
     if user_id and email_address:
         db = next(get_db())
         try:
+            # Ensure user_id is treated as a string
+            if not isinstance(user_id, str):
+                raise ValueError(f"User ID must be a string UUID, got {type(user_id)} instead")
+                
+            # First find the user's internal id using their UUID
+            user = db.query(User).filter_by(user_id=user_id).first()
+            if not user:
+                raise ValueError(f"User with UUID {user_id} not found")
+                
+            # Use the internal id to find their email account
             email_account = db.query(EmailAccount).filter_by(
-                user_id=user_id, 
+                user_id=user.id,  # Using the internal id as foreign key
                 email_address=email_address
             ).first()
             
@@ -74,14 +84,17 @@ def authenticate_gmail(user_id=None, email_address=None):
             if user_id and email_address:
                 db = next(get_db())
                 try:
-                    email_account = db.query(EmailAccount).filter_by(
-                        user_id=user_id,
-                        email_address=email_address
-                    ).first()
-                    
-                    if email_account:
-                        email_account.oauth_tokens = creds.to_json()
-                        db.commit()
+                    # Find user by UUID
+                    user = db.query(User).filter_by(user_id=user_id).first()
+                    if user:
+                        email_account = db.query(EmailAccount).filter_by(
+                            user_id=user.id,
+                            email_address=email_address
+                        ).first()
+                        
+                        if email_account:
+                            email_account.oauth_tokens = creds.to_json()
+                            db.commit()
                 finally:
                     db.close()
             else:
@@ -240,11 +253,11 @@ async def list_user_email_accounts(user_id: int) -> str:
         return f"Error listing user email accounts: {str(e)}"
 
 @mcp.tool()
-async def send_email(user_id: int, email_address: str, to: str, subject: str, body: str, html: bool = False) -> str:
+async def send_email(user_id: str, email_address: str, to: str, subject: str, body: str, html: bool = False) -> str:
     """Send an email using Gmail API.
     
     Args:
-        user_id: The user's ID in the database
+        user_id: The UUID of the user in the database
         email_address: The email address to use for sending
         to: Recipient email address or addresses (comma separated)
         subject: Email subject line
@@ -266,7 +279,7 @@ async def send_email(user_id: int, email_address: str, to: str, subject: str, bo
         return f"Authentication error: {error}"
 
 @mcp.tool()
-async def search_emails(user_id: int, email_address: str, query: str, max_results: int = 5) -> str:
+async def search_emails(user_id: str, email_address: str, query: str, max_results: int = 5) -> str:
     """Search for emails using Gmail search syntax.
     
     Args:
@@ -315,7 +328,7 @@ async def search_emails(user_id: int, email_address: str, query: str, max_result
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def count_daily_emails(user_id: int, email_address: str, start_date: str, end_date: str) -> str:
+async def count_daily_emails(user_id: str, email_address: str, start_date: str, end_date: str) -> str:
     """Count emails received for each day in a date range.
     
     Args:
@@ -368,7 +381,7 @@ async def count_daily_emails(user_id: int, email_address: str, start_date: str, 
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def get_email_content(user_id: int, email_address: str, email_id: str) -> str:
+async def get_email_content(user_id: str, email_address: str, email_id: str) -> str:
     """Get the full content of a specific email by its ID.
     
     Args:
@@ -421,7 +434,7 @@ async def get_email_content(user_id: int, email_address: str, email_id: str) -> 
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def find_email_threads(user_id: int, email_address: str, email_id: str) -> str:
+async def find_email_threads(user_id: str, email_address: str, email_id: str) -> str:
     """Find all emails that are part of the same conversation thread as the reference email.
     
     Args:
@@ -469,7 +482,7 @@ async def find_email_threads(user_id: int, email_address: str, email_id: str) ->
         return f"An error occurred: {error}"
 
 @mcp.tool()
-async def reply_to_thread(user_id: int, email_address: str, email_id: str, content: str, reply_all: bool = False) -> str:
+async def reply_to_thread(user_id: str, email_address: str, email_id: str, content: str, reply_all: bool = False) -> str:
     """Reply to a specific email while maintaining the conversation thread.
     
     Args:

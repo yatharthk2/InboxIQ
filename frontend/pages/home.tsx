@@ -1,14 +1,47 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FiSend, FiUser, FiMessageSquare, FiInbox, FiSettings, FiLogOut, FiMenu, FiX, FiChevronRight, FiWifi, FiWifiOff } from 'react-icons/fi';
+import { FiSend, FiUser, FiMessageSquare, FiInbox, FiSettings, FiLogOut, FiMenu, FiX, FiChevronRight, FiWifi, FiWifiOff, FiMail, FiTag } from 'react-icons/fi';
 
 type Message = {
   id: string;
   content: string;
   sender: 'user' | 'bot';
   timestamp: Date;
+};
+
+// New types for email accounts and tags
+type UserTag = {
+  id: number;
+  name: string;
+  color: string;
+  priority: number;
+};
+
+type EmailAccount = {
+  id: number;
+  email_address: string;
+  provider_type: string;
+  last_sync: string | null;
+  tag?: UserTag | null;
+};
+
+type CommandSuggestion = {
+  id: string;
+  type: 'email' | 'tag';
+  name: string;
+  displayText: string;
+  color?: string;
+};
+
+// New type for selected items
+type SelectedItem = {
+  type: 'email' | 'tag';
+  id: string;
+  value: string;
+  displayText: string;
+  color?: string;
 };
 
 const initialMessages: Message[] = [];
@@ -22,8 +55,22 @@ export default function Home() {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState('');
   
+  // New state for command suggestions
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [commandType, setCommandType] = useState<'email' | 'tag' | null>(null);
+  const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
+  const [filterText, setFilterText] = useState('');
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
+  const [userEmails, setUserEmails] = useState<EmailAccount[]>([]);
+  const [userTags, setUserTags] = useState<UserTag[]>([]);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  
+  // Add new state for selected items
+  const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -38,8 +85,44 @@ export default function Home() {
       router.push('/login');
     } else {
       setUser(JSON.parse(storedUser));
+      
+      // Fetch user's email accounts and tags on login
+      fetchUserEmailAccounts(JSON.parse(storedUser).id, token);
+      fetchUserTags(JSON.parse(storedUser).id, token);
     }
   }, [router]);
+  
+  // Fetch user's email accounts
+  const fetchUserEmailAccounts = async (userId: string, token: string) => {
+    try {
+      const response = await fetch(`/api/email/integrations?userId=${userId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setUserEmails(data.integrations || []);
+      }
+    } catch (error) {
+      console.error('Error fetching email accounts:', error);
+    }
+  };
+  
+  // Fetch user's tags
+  const fetchUserTags = async (userId: string, token: string) => {
+    try {
+      const response = await fetch(`/api/user-tags?userId=${userId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setUserTags(data.tags || []);
+      }
+    } catch (error) {
+      console.error('Error fetching user tags:', error);
+    }
+  };
   
   // Connect to WebSocket
   useEffect(() => {
@@ -148,6 +231,172 @@ export default function Home() {
     }
   }, [isSidebarOpen]);
   
+  // Handle keyboard navigation for suggestions
+  useEffect(() => {
+    if (!showSuggestions) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedSuggestionIndex(prev => 
+          prev < suggestions.length - 1 ? prev + 1 : prev
+        );
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedSuggestionIndex(prev => 
+          prev > 0 ? prev - 1 : 0
+        );
+      } else if (e.key === 'Enter' && suggestions.length > 0) {
+        e.preventDefault();
+        handleSelectSuggestion(suggestions[selectedSuggestionIndex]);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSuggestions();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showSuggestions, selectedSuggestionIndex, suggestions]);
+  
+  // Filter suggestions based on user input
+  const filteredSuggestions = useMemo(() => {
+    if (!filterText || !suggestions.length) return suggestions;
+    
+    return suggestions.filter(suggestion => 
+      suggestion.name.toLowerCase().includes(filterText.toLowerCase()) ||
+      suggestion.displayText.toLowerCase().includes(filterText.toLowerCase())
+    );
+  }, [suggestions, filterText]);
+  
+  // Handle input changes to detect slash command patterns
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.value;
+    setInput(newValue);
+    
+    // Check for slash commands
+    const match = newValue.match(/\/([a-z]*)$/);
+    if (match) {
+      const command = match[1].toLowerCase();
+      
+      // If command is partially "email" or "tags"
+      if ('email'.startsWith(command)) {
+        setCommandType('email');
+        showEmailSuggestions();
+      } else if ('tags'.startsWith(command)) {
+        setCommandType('tag');
+        showTagSuggestions();
+      } else {
+        closeSuggestions();
+      }
+    } else {
+      // Check for continued filtering after selecting command type
+      const emailFilterMatch = newValue.match(/\/email\s+(.+)$/);
+      const tagFilterMatch = newValue.match(/\/tags\s+(.+)$/);
+      
+      if (emailFilterMatch && commandType === 'email') {
+        setFilterText(emailFilterMatch[1]);
+      } else if (tagFilterMatch && commandType === 'tag') {
+        setFilterText(tagFilterMatch[1]);
+      } else if (newValue.endsWith('/email ')) {
+        setFilterText('');
+      } else if (newValue.endsWith('/tags ')) {
+        setFilterText('');
+      } else {
+        closeSuggestions();
+      }
+    }
+  };
+  
+  // Show email account suggestions
+  const showEmailSuggestions = () => {
+    setShowSuggestions(true);
+    setCommandType('email');
+    setSelectedSuggestionIndex(0);
+    setFilterText('');
+    
+    // Map email accounts to suggestion format
+    const emailSuggestions: CommandSuggestion[] = userEmails.map(email => ({
+      id: `email-${email.id}`,
+      type: 'email',
+      name: email.email_address,
+      displayText: `${email.email_address} (${email.provider_type})`,
+    }));
+    
+    setSuggestions(emailSuggestions);
+  };
+  
+  // Show tag suggestions
+  const showTagSuggestions = () => {
+    setShowSuggestions(true);
+    setCommandType('tag');
+    setSelectedSuggestionIndex(0);
+    setFilterText('');
+    
+    // Map tags to suggestion format
+    const tagSuggestions: CommandSuggestion[] = userTags.map(tag => ({
+      id: `tag-${tag.id}`,
+      type: 'tag',
+      name: tag.name,
+      displayText: tag.name,
+      color: tag.color,
+    }));
+    
+    setSuggestions(tagSuggestions);
+  };
+  
+  // Close the suggestions panel
+  const closeSuggestions = () => {
+    setShowSuggestions(false);
+    setCommandType(null);
+    setSuggestions([]);
+    setSelectedSuggestionIndex(0);
+    setFilterText('');
+  };
+  
+  // Handle selection of a suggestion
+  const handleSelectSuggestion = (suggestion: CommandSuggestion) => {
+    const pattern = commandType === 'email' ? /\/email(\s+.+)?$/ : /\/tags(\s+.+)?$/;
+    
+    // Replace the command pattern with the selected suggestion
+    let replacementText = '';
+    
+    if (suggestion.type === 'email') {
+      replacementText = `${suggestion.name}`;
+      // Store selected email
+      setSelectedItem({
+        type: 'email',
+        id: suggestion.id,
+        value: suggestion.name,
+        displayText: suggestion.displayText,
+      });
+    } else {
+      replacementText = `#${suggestion.name}`;
+      // Store selected tag
+      setSelectedItem({
+        type: 'tag',
+        id: suggestion.id,
+        value: suggestion.name,
+        displayText: suggestion.displayText,
+        color: suggestion.color,
+      });
+    }
+    
+    // Replace command with the actual value
+    const newValue = input.replace(pattern, replacementText);
+    setInput(newValue);
+    
+    // Close suggestions
+    closeSuggestions();
+    
+    // Focus the input
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    }, 10);
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -162,13 +411,23 @@ export default function Home() {
     };
     
     setMessages(prev => [...prev, userMessage]);
+    
+    let messageToSend = input.trim();
+    
+    // Check if an email is selected and format the message
+    if (selectedItem && selectedItem.type === 'email' && user) {
+      messageToSend = `user_id: ${user.id}\nEmail adress : ${selectedItem.value}\ntask : ${input.trim()}`;
+    }
+    
     setInput('');
     setIsProcessing(true);
+    // Clear selected item when sending message
+    setSelectedItem(null);
     
     try {
       // Send message through WebSocket
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(input.trim());
+        wsRef.current.send(messageToSend);
       } else {
         throw new Error('WebSocket is not connected');
       }
@@ -366,8 +625,8 @@ export default function Home() {
                 ref={inputRef}
                 type="text"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={isConnected ? "Type a message..." : "Connecting..."}
+                onChange={handleInputChange}
+                placeholder={isConnected ? "Type a message or /email, /tags..." : "Connecting..."}
                 className="w-full bg-black/30 border border-dark-border rounded-full py-3 pl-5 pr-12 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary shadow-inner"
                 disabled={isProcessing || !isConnected}
               />
@@ -380,10 +639,107 @@ export default function Home() {
               >
                 <FiSend size={18} />
               </button>
+              
+              {/* Command suggestions overlay */}
+              {showSuggestions && (
+                <div 
+                  ref={suggestionsRef}
+                  className="absolute bottom-full left-0 mb-2 w-full max-h-60 overflow-y-auto bg-dark-card border border-dark-border rounded-lg shadow-xl z-10"
+                >
+                  <div className="p-2 border-b border-dark-border bg-dark-bg/50">
+                    <div className="flex items-center text-sm text-primary font-medium">
+                      {commandType === 'email' ? (
+                        <>
+                          <FiMail className="mr-2" />
+                          Email Accounts
+                        </>
+                      ) : (
+                        <>
+                          <FiTag className="mr-2" />
+                          Tags
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {isLoadingSuggestions ? (
+                    <div className="p-4 text-center">
+                      <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-primary mx-auto"></div>
+                      <p className="text-sm text-gray-400 mt-2">Loading...</p>
+                    </div>
+                  ) : filteredSuggestions.length === 0 ? (
+                    <div className="p-4 text-center text-gray-400 text-sm">
+                      {filterText 
+                        ? `No ${commandType}s found matching "${filterText}"`
+                        : `No ${commandType}s available. Add some in settings.`}
+                    </div>
+                  ) : (
+                    <div className="py-1">
+                      {filteredSuggestions.map((suggestion, index) => (
+                        <div
+                          key={suggestion.id}
+                          className={`px-3 py-2 cursor-pointer flex items-center ${
+                            selectedSuggestionIndex === index 
+                              ? 'bg-primary/20 text-white' 
+                              : 'hover:bg-dark-bg/80'
+                          }`}
+                          onClick={() => handleSelectSuggestion(suggestion)}
+                          onMouseEnter={() => setSelectedSuggestionIndex(index)}
+                        >
+                          {suggestion.type === 'email' ? (
+                            <FiMail className="mr-2 text-gray-400 flex-shrink-0" />
+                          ) : (
+                            <div 
+                              className="w-3 h-3 rounded-full mr-2 flex-shrink-0"
+                              style={{ backgroundColor: suggestion.color }}
+                            />
+                          )}
+                          <span className="text-sm truncate">{suggestion.displayText}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
+            
+            {/* Selected item indicator */}
+            {selectedItem && (
+              <div className="mt-2 flex items-center">
+                <div 
+                  className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                    selectedItem.type === 'email' 
+                      ? 'bg-blue-400/20 text-blue-400' 
+                      : `bg-opacity-20 text-opacity-90`
+                  }`}
+                  style={selectedItem.type === 'tag' && selectedItem.color ? {
+                    backgroundColor: `${selectedItem.color}20`,
+                    color: selectedItem.color
+                  } : undefined}
+                >
+                  {selectedItem.type === 'email' ? (
+                    <FiMail className="mr-1.5" size={12} />
+                  ) : (
+                    <FiTag className="mr-1.5" size={12} />
+                  )}
+                  <span>{selectedItem.displayText}</span>
+                </div>
+                <button
+                  type="button"
+                  className="ml-1.5 text-gray-400 hover:text-gray-300"
+                  onClick={() => {
+                    setSelectedItem(null);
+                    setInput('');
+                  }}
+                >
+                  <FiX size={14} />
+                </button>
+              </div>
+            )}
+            
             {isConnected ? (
               <div className="mt-2 text-xs text-center text-gray-500">
-                Try: "Summarize my recent emails" or "/tools" to see available commands
+                Try: "Summarize my recent emails" or type "/" to see available commands
               </div>
             ) : (
               <div className="mt-2 text-xs text-center text-red-500">
