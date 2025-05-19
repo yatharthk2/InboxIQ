@@ -9,6 +9,22 @@ type Message = {
   content: string;
   sender: 'user' | 'bot';
   timestamp: Date;
+  isPermissionRequest?: boolean;
+  isPermissionDenied?: boolean;
+  toolName?: string;
+  permissionData?: {
+    action: string;
+    request_id: string;
+    pending: boolean;
+  };
+  permissionDetails?: { // New field for structured permission details
+    type: 'send_email' | 'search_emails' | 'unknown';
+    to?: string;
+    subject?: string;
+    body?: string;
+    query?: string;
+    rawAction?: string; // Store the original action string
+  };
 };
 
 // New types for email accounts and tags
@@ -156,7 +172,70 @@ export default function Home() {
         ws.onmessage = (event) => {
           console.log('Message received:', event.data);
           
-          // Add bot message
+          try {
+            // Try to parse as JSON
+            const data = JSON.parse(event.data);
+            
+            // Handle permission request
+            if (data.type === 'permission_request') {
+              let details: Message['permissionDetails'] = { type: 'unknown', rawAction: data.action };
+              const actionLower = data.action.toLowerCase();
+
+              if (actionLower.includes('send an email')) {
+                details.type = 'send_email';
+                const toMatch = data.action.match(/to\s+([^\s]+(?:@|\.)[^\s]+)/i);
+                const subjectMatch = data.action.match(/subject\s+"([^"]+)"/i);
+                const bodyMatch = data.action.match(/body\s+"([^"]+)"/i); // Basic body extraction
+                if (toMatch) details.to = toMatch[1];
+                if (subjectMatch) details.subject = subjectMatch[1];
+                if (bodyMatch) details.body = bodyMatch[1];
+              } else if (actionLower.includes('search emails') || actionLower.includes('retrieve emails') || actionLower.includes('read emails')) {
+                details.type = 'search_emails';
+                // Example: "Search emails for 'important documents'"
+                const queryMatch = data.action.match(/(?:search|retrieve|read) emails (?:for|with|matching)\s+'([^']+)'/i);
+                if (queryMatch) details.query = queryMatch[1];
+              }
+
+              const permissionMessage: Message = {
+                id: Date.now().toString(),
+                content: data.action, // Keep original content for fallback or detailed view
+                sender: 'bot',
+                timestamp: new Date(),
+                isPermissionRequest: true,
+                permissionData: {
+                  action: data.action,
+                  request_id: data.request_id,
+                  pending: true
+                },
+                permissionDetails: details,
+              };
+              
+              setMessages(prev => [...prev, permissionMessage]);
+              return;
+            }
+          } catch (e) {
+            // Not JSON, handle as regular message
+            
+            // Check for permission denied messages and format them nicely
+            const permissionDeniedMatch = event.data.match(/\[Permission denied for tool ([^\]]+)\]/);
+            if (permissionDeniedMatch) {
+              const toolName = permissionDeniedMatch[1];
+              const formattedMessage: Message = {
+                id: Date.now().toString(),
+                content: event.data,
+                sender: 'bot',
+                timestamp: new Date(),
+                isPermissionDenied: true,
+                toolName: toolName
+              };
+              
+              setMessages(prev => [...prev, formattedMessage]);
+              setIsProcessing(false);
+              return;
+            }
+          }
+          
+          // Add regular bot message
           const botMessage: Message = {
             id: Date.now().toString(),
             content: event.data,
@@ -504,6 +583,55 @@ export default function Home() {
     router.push('/login');
   };
   
+  // Handle permission response
+  const handlePermissionResponse = (requestId: string, approved: boolean) => {
+    // Update the message to show the decision
+    setMessages(prev => prev.map(msg => {
+      if (msg.permissionData?.request_id === requestId) {
+        return {
+          ...msg,
+          permissionData: {
+            ...msg.permissionData,
+            pending: false
+          }
+        };
+      }
+      return msg;
+    }));
+    
+    // Send the response back through WebSocket
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const response = {
+        type: 'permission_response',
+        request_id: requestId,
+        approved
+      };
+      wsRef.current.send(JSON.stringify(response));
+    }
+  };
+  
+  // Add this function to retry the last action when permission was denied
+  const handleRetryAction = (toolName: string) => {
+    // Create a retry message
+    const retryMessage = `I'd like to retry the ${toolName} action. Please request permission again.`;
+    
+    // Add the message to the chat
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      content: retryMessage,
+      sender: 'user',
+      timestamp: new Date(),
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
+    setIsProcessing(true);
+    
+    // Send the message to the server
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(retryMessage);
+    }
+  };
+  
   if (!user) {
     return (
       <div className="flex justify-center items-center min-h-screen bg-dark-bg">
@@ -617,13 +745,149 @@ export default function Home() {
                 className={`max-w-xs sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl rounded-2xl px-4 py-3 ${
                   message.sender === 'user' 
                     ? 'bg-primary text-white ml-12'
-                    : 'bg-dark-card/90 border border-dark-border mr-12'
+                    : message.isPermissionRequest 
+                      ? 'bg-gradient-to-br from-amber-700/20 via-amber-800/30 to-yellow-700/20 border border-amber-600/40 backdrop-blur-md mr-12 shadow-lg'
+                      : message.isPermissionDenied
+                        ? 'bg-red-900/20 border border-red-700/30 backdrop-blur-sm mr-12'
+                        : 'bg-dark-card/90 border border-dark-border mr-12'
                 }`}
               >
-                <p className="whitespace-pre-line">{message.content}</p>
-                <span className="text-xs opacity-70 block mt-1 text-right">
-                  {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
+                {message.isPermissionRequest ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center text-amber-400">
+                      <svg className="w-6 h-6 mr-2.5 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <p className="font-semibold text-lg">Permission Required</p>
+                    </div>
+                    
+                    {/* Enhanced permission display using permissionDetails */}
+                    {message.permissionDetails?.type === 'send_email' ? (
+                      <div className="mt-2 bg-dark-bg/60 rounded-lg overflow-hidden border border-indigo-700/50 shadow-inner">
+                        <div className="bg-indigo-800/40 p-3 border-b border-indigo-700/60">
+                          <div className="flex items-center">
+                            <FiMail className="text-indigo-300 mr-2.5" size={18}/>
+                            <span className="font-medium text-indigo-200 text-md">Send Email Request</span>
+                          </div>
+                        </div>
+                        <div className="p-4 space-y-3">
+                          {message.permissionDetails.to && (
+                            <div className="flex items-start">
+                              <span className="text-gray-400 text-sm w-20 font-medium">To:</span>
+                              <span className="text-indigo-300 text-sm font-semibold bg-indigo-500/20 px-2 py-0.5 rounded">{message.permissionDetails.to}</span>
+                            </div>
+                          )}
+                          {message.permissionDetails.subject && (
+                            <div className="flex items-start">
+                              <span className="text-gray-400 text-sm w-20 font-medium">Subject:</span>
+                              <span className="text-white text-sm">{message.permissionDetails.subject}</span>
+                            </div>
+                          )}
+                          {message.permissionDetails.body && (
+                            <div className="flex items-start">
+                              <span className="text-gray-400 text-sm w-20 font-medium">Body:</span>
+                              <p className="text-gray-300 text-sm bg-dark-card/50 p-2 rounded max-h-24 overflow-y-auto scrollbar-thin scrollbar-thumb-dark-border">
+                                {message.permissionDetails.body}
+                              </p>
+                            </div>
+                          )}
+                           {!message.permissionDetails.to && !message.permissionDetails.subject && !message.permissionDetails.body && (
+                            <p className="text-gray-300 text-sm italic">Details: {message.permissionDetails.rawAction}</p>
+                          )}
+                          <p className="text-amber-300/80 text-xs italic pt-2">
+                            Do you authorize sending this email?
+                          </p>
+                        </div>
+                      </div>
+                    ) : message.permissionDetails?.type === 'search_emails' ? (
+                      <div className="mt-2 bg-dark-bg/60 rounded-lg overflow-hidden border border-sky-700/50 shadow-inner">
+                        <div className="bg-sky-800/40 p-3 border-b border-sky-700/60">
+                          <div className="flex items-center">
+                            <FiInbox className="text-sky-300 mr-2.5" size={18}/>
+                            <span className="font-medium text-sky-200 text-md">Email Access Request</span>
+                          </div>
+                        </div>
+                        <div className="p-4 space-y-3">
+                          <p className="text-gray-200">
+                            The application wants to: <span className="font-semibold text-sky-300">{message.permissionDetails.rawAction?.split("\n\n")[0]}</span>
+                          </p>
+                          {message.permissionDetails.query && (
+                            <div className="flex items-start">
+                              <span className="text-gray-400 text-sm w-20 font-medium">Query:</span>
+                              <span className="text-sky-300 text-sm font-semibold bg-sky-500/20 px-2 py-0.5 rounded">{message.permissionDetails.query}</span>
+                            </div>
+                          )}
+                          <p className="text-amber-300/80 text-xs italic pt-2">
+                            Do you authorize this email operation?
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      // Fallback for unknown or general permission requests
+                      <div className="mt-2 bg-dark-bg/50 p-3 rounded-md border border-gray-600/50">
+                        <p className="whitespace-pre-line text-gray-200">{message.permissionDetails?.rawAction || message.content}</p>
+                        <p className="text-amber-300/80 text-xs italic pt-2">
+                          Do you grant permission for this action?
+                        </p>
+                      </div>
+                    )}
+                    
+                    {message.permissionData?.pending ? (
+                      <div className="flex space-x-3 mt-4 pt-2 border-t border-amber-600/30">
+                        <motion.button
+                          whileHover={{ scale: 1.03, boxShadow: "0px 0px 15px rgba(74, 222, 128, 0.4)" }}
+                          whileTap={{ scale: 0.97 }}
+                          className="flex-1 py-2.5 px-4 bg-green-500/20 hover:bg-green-500/30 border border-green-500/40 rounded-lg text-green-400 font-semibold transition-all duration-150 shadow-md hover:shadow-green-500/30"
+                          onClick={() => handlePermissionResponse(message.permissionData!.request_id, true)}
+                        >
+                          Allow
+                        </motion.button>
+                        <motion.button
+                          whileHover={{ scale: 1.03, boxShadow: "0px 0px 15px rgba(248, 113, 113, 0.4)" }}
+                          whileTap={{ scale: 0.97 }}
+                          className="flex-1 py-2.5 px-4 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 rounded-lg text-red-400 font-semibold transition-all duration-150 shadow-md hover:shadow-red-500/30"
+                          onClick={() => handlePermissionResponse(message.permissionData!.request_id, false)}
+                        >
+                          Deny
+                        </motion.button>
+                      </div>
+                    ) : (
+                      <p className="text-sm italic mt-3 text-center text-gray-400">
+                        {message.permissionData?.pending === false ? 
+                          "Your response has been recorded." : "Waiting for action..."}
+                      </p>
+                    )}
+                  </div>
+                ) : message.isPermissionDenied ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center text-red-500">
+                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <p className="font-medium">Action Blocked</p>
+                    </div>
+                    <p className="text-gray-300">
+                      You've denied permission for the <span className="text-red-400 font-semibold">{message.toolName}</span> action.
+                    </p>
+                    <div className="flex space-x-2 mt-3">
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        className="flex-1 py-2 px-4 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-400 font-medium transition-colors"
+                        onClick={() => handleRetryAction(message.toolName || '')}
+                      >
+                        Retry Action
+                      </motion.button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="whitespace-pre-line">{message.content}</p>
+                    <span className="text-xs opacity-70 block mt-1 text-right">
+                      {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </>
+                )}
               </motion.div>
               
               {/* User avatar */}

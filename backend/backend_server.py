@@ -46,18 +46,138 @@ class MCPClient:
             bool: True if permission granted, False otherwise
         """
         if self.websocket:
-            await self.websocket.send_text(f"Permission required: {action_description}. Allow? (yes/no)")
-            response = await self.websocket.receive_text()
-            return response.strip().lower() in ['yes', 'y']
+            # Filter sensitive information and format action description
+            formatted_action = self.format_permission_request(action_description)
+            
+            # Send a structured permission request message
+            permission_request = {
+                "type": "permission_request",
+                "action": formatted_action,
+                "request_id": f"perm_{int(asyncio.get_event_loop().time() * 1000)}"
+            }
+            await self.websocket.send_text(json.dumps(permission_request))
+            
+            # Wait for response
+            response_text = await self.websocket.receive_text()
+            try:
+                response = json.loads(response_text)
+                if isinstance(response, dict) and "type" in response and response["type"] == "permission_response":
+                    return response.get("approved", False)
+                return response_text.strip().lower() in ['yes', 'y']  # Fallback for plain text responses
+            except json.JSONDecodeError:
+                # Handle plain text responses as fallback
+                return response_text.strip().lower() in ['yes', 'y']
         else:
+            # For CLI interaction, also filter sensitive information
+            formatted_action = self.format_permission_request(action_description)
             while True:
-                response = input(f"The system wants to {action_description}. Do you allow this? (yes/no): ").strip().lower()
+                response = input(f"The system wants to {formatted_action}. Do you allow this? (yes/no): ").strip().lower()
                 if response in ['yes', 'y']:
                     return True
                 elif response in ['no', 'n']:
                     return False
                 else:
                     print("Please answer yes or no.")
+
+    def format_permission_request(self, action_description: str) -> str:
+        """Format permission request to hide sensitive information and improve presentation.
+        
+        Args:
+            action_description: The original action description
+            
+        Returns:
+            Formatted action description with sensitive info removed
+        """
+        # Remove user_id and email_address from the description
+        filtered_desc = action_description
+        
+        # Filter out user_id patterns
+        filtered_desc = self.filter_sensitive_info(filtered_desc, "user_id", "user ID")
+        
+        # Filter out email address patterns
+        filtered_desc = self.filter_sensitive_info(filtered_desc, "email_address", "your email")
+        
+        # Special formatting for email sending
+        if "send an email" in filtered_desc.lower():
+            return self.format_email_permission(filtered_desc)
+        
+        # Special formatting for email retrieval
+        if any(x in filtered_desc.lower() for x in ["search emails", "get email", "read email", "find email"]):
+            return self.format_email_retrieval_permission(filtered_desc)
+            
+        return filtered_desc
+        
+    def filter_sensitive_info(self, text: str, sensitive_key: str, replacement: str) -> str:
+        """Remove sensitive information from a string.
+        
+        Args:
+            text: The text to process
+            sensitive_key: The sensitive key to look for (e.g., "user_id")
+            replacement: What to replace the sensitive info with
+            
+        Returns:
+            Text with sensitive information replaced
+        """
+        import re
+        # Pattern like: user_id: 123abc or "user_id": "123abc"
+        patterns = [
+            rf'{sensitive_key}:\s*["\']?([^"\',\s}})]+)["\']?',  # Basic key: value
+            rf'["\']?{sensitive_key}["\']?\s*:\s*["\']?([^"\',\s}})]+)["\']?',  # JSON-style "key": "value"
+        ]
+        
+        for pattern in patterns:
+            text = re.sub(pattern, f"{sensitive_key}: [PRIVATE]", text)
+            
+        return text
+        
+    def format_email_permission(self, description: str) -> str:
+        """Format email sending permission request in a more user-friendly way.
+        
+        Args:
+            description: Original description with email details
+            
+        Returns:
+            Formatted email permission request
+        """
+        # Extract email details using regex
+        import re
+        
+        to_match = re.search(r'to:\s*["\']?([^"\',\s}})]+)["\']?', description)
+        subject_match = re.search(r'subject:\s*["\']?([^"\',}})]+)["\']?', description) 
+        
+        to_address = to_match.group(1) if to_match else "recipient"
+        subject = subject_match.group(1) if subject_match else "No Subject"
+        
+        # Format a nice email permission request
+        return f"send an email to {to_address} with subject \"{subject}\"\n\nDo you want to approve this operation?"
+        
+    def format_email_retrieval_permission(self, description: str) -> str:
+        """Format email retrieval permission request in a more user-friendly way.
+        
+        Args:
+            description: Original description with retrieval details
+            
+        Returns:
+            Formatted email retrieval permission request
+        """
+        # Extract query details if available
+        import re
+        
+        query_match = re.search(r'query:\s*["\']?([^"\',}})]+)["\']?', description)
+        query = query_match.group(1) if query_match else ""
+        
+        action_type = "retrieve"
+        if "search" in description.lower():
+            action_type = "search for"
+        elif "get" in description.lower():
+            action_type = "retrieve"
+        elif "read" in description.lower():
+            action_type = "read"
+            
+        if query:
+            return f"{action_type} emails matching \"{query}\"\n\nDo you want to approve this operation?"
+        else:
+            return f"{action_type} emails from your account\n\nDo you want to approve this operation?"
 
     async def connect_to_server(self, server_script_path: str):
         """Connect to an MCP server
@@ -229,8 +349,26 @@ class MCPClient:
         if not self.require_permission:
             return True
             
-        args_str = json.dumps(tool_args, indent=2)
-        return await self.ask_permission(f"execute tool '{tool_name}' with arguments:\n{args_str}")
+        # Filter sensitive args before creating the action description
+        filtered_args = {k: v if not k.lower() in ["user_id", "email_address"] else "[PRIVATE]" 
+                        for k, v in tool_args.items()}
+        
+        if tool_name == "send_email":
+            # For email sending, create a more specific and user-friendly action description
+            action = f"send an email to: {tool_args.get('to', 'recipient')}\nsubject: {tool_args.get('subject', 'No Subject')}"
+            if 'html' in tool_args and tool_args['html']:
+                action += "\n(HTML email)"
+        elif tool_name == "search_emails":
+            # For email searching
+            action = f"search emails with query: {tool_args.get('query', '')}"
+        elif tool_name in ["get_email_content", "find_email_threads"]:
+            # For email content retrieval
+            action = f"retrieve contents of email with ID: {tool_args.get('email_id', '')}"
+        else:
+            # Generic action description for other tools
+            action = f"execute tool '{tool_name}' with filtered arguments:\n{json.dumps(filtered_args, indent=2)}"
+            
+        return await self.ask_permission(action)
 
     async def process_query(self, query: str, max_tool_calls: int = 5) -> str:
         """Process a query using Groq and available tools
@@ -329,7 +467,10 @@ class MCPClient:
                     })
                     await self.add_to_history("tool", permission_denied_msg, 
                                             {"tool": tool_name, "permission": "denied", "tool_call_id": tool_call.id})
-                    final_text.append(f"\n[Permission denied for tool {tool_name}]")
+                    
+                    # Create a more user-friendly message
+                    user_friendly_msg = f"I need your permission to perform this action, but you've denied the request. If you'd like to allow this action in the future, please let me know and I'll ask again."
+                    final_text.append(f"\n{user_friendly_msg}\n[Permission denied for tool {tool_name}]")
                     continue
                 
                 try:

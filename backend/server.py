@@ -138,93 +138,93 @@ def create_message(sender, to, subject, message_text, html=False):
     raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
     return {'raw': raw_message}
 
-@mcp.tool()
-async def connect_gmail_account(user_id: int, authorization_code: str, redirect_uri: str) -> str:
-    """Connect a user's Gmail account using the authorization code from OAuth flow."""
-    try:
-        # Verify user exists using SQLAlchemy
-        db = next(get_db())
-        try:
-            user = db.query(User).filter_by(id=user_id).first()
-            if not user:
-                return "Error: User not found"
+# @mcp.tool()
+# async def connect_gmail_account(user_id: int, authorization_code: str, redirect_uri: str) -> str:
+#     """Connect a user's Gmail account using the authorization code from OAuth flow."""
+#     try:
+#         # Verify user exists using SQLAlchemy
+#         db = next(get_db())
+#         try:
+#             user = db.query(User).filter_by(id=user_id).first()
+#             if not user:
+#                 return "Error: User not found"
             
-            # Exchange authorization code for access and refresh tokens
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES, redirect_uri=redirect_uri)
-            flow.fetch_token(code=authorization_code)
-            creds = flow.credentials
+#             # Exchange authorization code for access and refresh tokens
+#             flow = InstalledAppFlow.from_client_secrets_file(
+#                 'credentials.json', SCOPES, redirect_uri=redirect_uri)
+#             flow.fetch_token(code=authorization_code)
+#             creds = flow.credentials
             
-            # Get user's email address from Google profile
-            service = build('gmail', 'v1', credentials=creds)
-            profile = service.users().getProfile(userId='me').execute()
-            email_address = profile['emailAddress']
+#             # Get user's email address from Google profile
+#             service = build('gmail', 'v1', credentials=creds)
+#             profile = service.users().getProfile(userId='me').execute()
+#             email_address = profile['emailAddress']
             
-            # Check if email account already exists
-            existing_account = db.query(EmailAccount).filter_by(
-                user_id=user_id, 
-                email_address=email_address
-            ).first()
+#             # Check if email account already exists
+#             existing_account = db.query(EmailAccount).filter_by(
+#                 user_id=user_id, 
+#                 email_address=email_address
+#             ).first()
             
-            if existing_account:
-                # Update existing account
-                existing_account.oauth_tokens = creds.to_json()
-                db.commit()
-            else:
-                # Create a new email account
-                new_account = EmailAccount(
-                    user_id=user_id,
-                    email_address=email_address,
-                    provider_type="gmail",
-                    oauth_tokens=creds.to_json()
-                )
-                db.add(new_account)
-                db.commit()
+#             if existing_account:
+#                 # Update existing account
+#                 existing_account.oauth_tokens = creds.to_json()
+#                 db.commit()
+#             else:
+#                 # Create a new email account
+#                 new_account = EmailAccount(
+#                     user_id=user_id,
+#                     email_address=email_address,
+#                     provider_type="gmail",
+#                     oauth_tokens=creds.to_json()
+#                 )
+#                 db.add(new_account)
+#                 db.commit()
             
-            return f"Successfully connected Gmail account: {email_address}"
-        finally:
-            db.close()
-    except Exception as e:
-        return f"Error connecting Gmail account: {str(e)}"
+#             return f"Successfully connected Gmail account: {email_address}"
+#         finally:
+#             db.close()
+#     except Exception as e:
+#         return f"Error connecting Gmail account: {str(e)}"
 
-@mcp.tool()
-async def register_user(email: str, password: str) -> str:
-    """Register a new user in the system.
+# @mcp.tool()
+# async def register_user(email: str, password: str) -> str:
+#     """Register a new user in the system.
     
-    Args:
-        email: Email address for the new user
-        password: Password for the new user (will be hashed)
-    """
-    try:
-        # Use SQLAlchemy to create new user
-        db = next(get_db())
-        try:
-            # Check if user already exists
-            existing_user = db.query(User).filter_by(email=email).first()
-            if existing_user:
-                return "Error: User with this email already exists"
+#     Args:
+#         email: Email address for the new user
+#         password: Password for the new user (will be hashed)
+#     """
+#     try:
+#         # Use SQLAlchemy to create new user
+#         db = next(get_db())
+#         try:
+#             # Check if user already exists
+#             existing_user = db.query(User).filter_by(email=email).first()
+#             if existing_user:
+#                 return "Error: User with this email already exists"
             
-            # Create a simple hash of the password (in production use proper hashing)
-            import hashlib
-            hashed_password = hashlib.sha256(password.encode()).hexdigest()
+#             # Create a simple hash of the password (in production use proper hashing)
+#             import hashlib
+#             hashed_password = hashlib.sha256(password.encode()).hexdigest()
             
-            # Create new user with the required fields
-            new_user = User(
-                email=email,
-                hashed_password=hashed_password,
-                preferences={},  # Empty JSON object
-                created_at=datetime.datetime.utcnow()
-            )
+#             # Create new user with the required fields
+#             new_user = User(
+#                 email=email,
+#                 hashed_password=hashed_password,
+#                 preferences={},  # Empty JSON object
+#                 created_at=datetime.datetime.utcnow()
+#             )
             
-            db.add(new_user)
-            db.commit()
-            db.refresh(new_user)
+#             db.add(new_user)
+#             db.commit()
+#             db.refresh(new_user)
             
-            return f"User registered successfully with ID: {new_user.id}"
-        finally:
-            db.close()
-    except Exception as e:
-        return f"Error registering user: {str(e)}"
+#             return f"User registered successfully with ID: {new_user.id}"
+#         finally:
+#             db.close()
+#     except Exception as e:
+#         return f"Error registering user: {str(e)}"
 
 @mcp.tool()
 async def list_user_email_accounts(user_id: int) -> str:
